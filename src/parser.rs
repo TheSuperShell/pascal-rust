@@ -1,3 +1,5 @@
+use std::{fmt::Display, process::Command};
+
 use crate::{error::Error, lexer::Lexer, tokens::Token};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -452,4 +454,59 @@ pub struct Tree {
     pub expr_pool: NodePool<Expr>,
     pub stmt_pool: NodePool<Stmt>,
     pub type_pool: NodePool<Type>,
+}
+
+impl Tree {
+    fn visit_stmt(&self, id: NodeId, level: usize) -> String {
+        let indent = " ".repeat(2 * level);
+        match self.stmt_pool.get(id) {
+            Stmt::Assign { left, right } => {
+                let left_str = self.visit_expr(*left, level + 1);
+                let right_str = self.visit_expr(*right, level + 1);
+                format!("{indent}Assign\n{left_str}\n{right_str}")
+            }
+            Stmt::Compound(stmts) => stmts
+                .iter()
+                .map(|id| self.visit_stmt(*id, level + 1))
+                .collect::<Vec<String>>()
+                .join(""),
+            Stmt::NoOp => indent,
+            _ => "stmt".to_string(),
+        }
+    }
+    fn visit_expr(&self, id: NodeId, level: usize) -> String {
+        let indent = " ".repeat(2 * level);
+        match self.expr_pool.get(id) {
+            Expr::BinOp { op, left, right } => {
+                let left_str = self.visit_expr(*left, level + 1);
+                let right_str = self.visit_expr(*right, level + 1);
+                format!("{indent}BinOp\n{left_str}\n{indent}  {:?}\n{right_str}", op)
+            }
+            Expr::LiteralInteger(v) => format!("{indent}Lit({v})"),
+            Expr::LiteralBool(v) => format!("{indent}Lit({v})"),
+            Expr::LiteralChar(v) => format!("{indent}Lit({v})"),
+            Expr::LiteralReal(v) => format!("{indent}Lit({v})"),
+            Expr::LiteralString(v) => format!("{indent}Lit({v})"),
+            Expr::Var { name } => format!("{indent}Var({name})"),
+            _ => "expr".to_string(),
+        }
+    }
+}
+
+impl Display for Tree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self.expr_pool.get(self.program.name) {
+            Expr::Var { name } => name,
+            _ => panic!("should be var"),
+        };
+        let compund: String = match self.stmt_pool.get(self.program.block.statements) {
+            Stmt::Compound(stmts) => stmts,
+            _ => panic!("should be compund"),
+        }
+        .iter()
+        .map(|stmt| self.visit_stmt(*stmt, 1))
+        .collect::<Vec<String>>()
+        .join("\n");
+        write!(f, "Program {name}\n{compund}")
+    }
 }
