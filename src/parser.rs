@@ -645,11 +645,11 @@ impl Tree {
                 let right_str = self.visit_expr(*right, level + 1);
                 format!("{indent}BinOp\n{left_str}\n{indent}  {:?}\n{right_str}", op)
             }
-            Expr::LiteralInteger(v) => format!("{indent}Lit({v})"),
-            Expr::LiteralBool(v) => format!("{indent}Lit({v})"),
-            Expr::LiteralChar(v) => format!("{indent}Lit({v})"),
-            Expr::LiteralReal(v) => format!("{indent}Lit({v})"),
-            Expr::LiteralString(v) => format!("{indent}Lit({v})"),
+            Expr::LiteralInteger(v) => format!("{indent}LitInt({v})"),
+            Expr::LiteralBool(v) => format!("{indent}LitBool({v})"),
+            Expr::LiteralChar(v) => format!("{indent}LitChar('{v}')"),
+            Expr::LiteralReal(v) => format!("{indent}LitReal({v})"),
+            Expr::LiteralString(v) => format!("{indent}LitString(\"{v}\")"),
             Expr::Var { name } => format!("{indent}Var({name})"),
             Expr::Call { name, args } => {
                 let param_str = args

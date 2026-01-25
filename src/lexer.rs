@@ -114,9 +114,9 @@ impl Lexer {
         {
             self.advance();
         }
-        let word = &self.source_code[current_index..self.index].to_uppercase();
+        let word = &self.source_code[current_index..self.index];
         self.keywords
-            .get(word)
+            .get(&word.to_uppercase())
             .unwrap_or(&Token::Id(word.to_string()))
             .clone()
     }
