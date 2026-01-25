@@ -93,7 +93,7 @@ pub struct Condition {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    name: NodeId,
+    name: String,
     block: Block,
 }
 
@@ -201,7 +201,7 @@ impl Parser {
     /// Program Id Semi block Dot
     fn program(&mut self) -> Result<Program, Error> {
         self.eat(Token::Program)?;
-        let var = self.id()?;
+        let var = self.id_str()?;
         self.eat(Token::Semi)?;
         let block = self.block()?;
         self.eat(Token::Dot)?;
@@ -264,6 +264,7 @@ impl Parser {
         ) {
             match self.current_token {
                 Token::Const => {
+                    self.eat(Token::Const)?;
                     decls.extend(self.const_declaration()?);
                     self.eat(Token::Semi)?;
                     while let Token::Id(_) = self.current_token {
@@ -272,6 +273,7 @@ impl Parser {
                     }
                 }
                 Token::Type => {
+                    self.eat(Token::Type)?;
                     decls.extend(self.type_declaration()?);
                     self.eat(Token::Semi)?;
                     while let Token::Id(_) = self.current_token {
@@ -280,6 +282,7 @@ impl Parser {
                     }
                 }
                 Token::Var => {
+                    self.eat(Token::Var)?;
                     decls.extend(self.var_declaration()?);
                     self.eat(Token::Semi)?;
                     while let Token::Id(_) = self.current_token {
@@ -326,7 +329,6 @@ impl Parser {
     /// var_declaration:
     /// Var id (Comma id)* Colon type_spec (Equal literal)?
     fn var_declaration(&mut self) -> Result<Vec<Decl>, Error> {
-        self.eat(Token::Var)?;
         let mut vars = vec![self.id()?];
         while let Token::Comma = self.current_token {
             self.eat(Token::Comma)?;
@@ -422,7 +424,6 @@ impl Parser {
     /// const_declaration:
     /// Const id (Comma id)* Eq literal
     fn const_declaration(&mut self) -> Result<Vec<Decl>, Error> {
-        self.eat(Token::Const)?;
         let mut names = vec![self.id()?];
         while let Token::Comma = self.current_token {
             self.eat(Token::Comma)?;
@@ -439,7 +440,6 @@ impl Parser {
     /// type_declaration:
     /// Type id (Comma id)* Equal type_spec
     fn type_declaration(&mut self) -> Result<Vec<Decl>, Error> {
-        self.eat(Token::Type)?;
         let mut names = vec![self.id()?];
         while let Token::Comma = self.current_token {
             self.eat(Token::Comma)?;
@@ -905,6 +905,168 @@ pub struct Tree {
 }
 
 impl Tree {
+    fn visit_declaraction(&self, decl: &Decl, level: usize) -> String {
+        let indent = " ".repeat(2 * level);
+        match decl {
+            Decl::ConstDecl { var, literal } => {
+                format!(
+                    "{indent}Const\n{}\n{}",
+                    self.visit_expr(*var, level + 1),
+                    self.visit_expr(*literal, level + 2)
+                )
+            }
+            Decl::TypeDecl { var, type_node } => {
+                format!(
+                    "{indent}Type\n{}\n{}",
+                    self.visit_expr(*var, level + 1),
+                    self.visit_type(*type_node, level + 2)
+                )
+            }
+            Decl::VarDecl {
+                var,
+                type_node,
+                default_value,
+            } => {
+                let mut result = format!(
+                    "{indent}Var\n{}\n{}",
+                    self.visit_expr(*var, level + 1),
+                    self.visit_type(*type_node, level + 2)
+                );
+                if let Some(v) = default_value {
+                    result.push_str("\n");
+                    result.push_str(&format!(
+                        "{indent}  Default\n{}",
+                        self.visit_expr(*v, level + 2)
+                    ));
+                };
+                result
+            }
+            Decl::Procedure {
+                name,
+                block,
+                params,
+            } => {
+                let mut result = format!("{indent}Procedure({name})");
+                let params_str = params
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{}{}\n{}",
+                            self.visit_expr(p.var, level + 1),
+                            match p.out {
+                                true => " Out",
+                                false => "",
+                            },
+                            self.visit_type(p.type_node, level + 2)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !params_str.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&params_str);
+                }
+                let decls_str = block
+                    .declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, level))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !decls_str.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&decls_str);
+                }
+                result.push_str("\n");
+                result.push_str(&self.visit_stmt(block.statements, level));
+                result
+            }
+            Decl::Function {
+                name,
+                block,
+                params,
+                return_type,
+            } => {
+                let mut result = format!(
+                    "{indent}Function({name})\n{}",
+                    self.visit_type(*return_type, level + 1)
+                );
+                let params_str = params
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{}{}\n{}",
+                            self.visit_expr(p.var, level + 1),
+                            match p.out {
+                                true => " Out",
+                                false => "",
+                            },
+                            self.visit_type(p.type_node, level + 2)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !params_str.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&params_str);
+                }
+                let decls_str = block
+                    .declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, level))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !decls_str.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&decls_str);
+                }
+                result.push_str("\n");
+                result.push_str(&self.visit_stmt(block.statements, level));
+                result
+            }
+        }
+    }
+    fn visit_type(&self, id: NodeId, level: usize) -> String {
+        let indent = " ".repeat(2 * level);
+        match self.type_pool.get(id) {
+            Type::Integer => format!("{indent}Type(Integer)"),
+            Type::Real => format!("{indent}Type(Real)"),
+            Type::Boolean => format!("{indent}Type(Boolean)"),
+            Type::Char => format!("{indent}Type(Char)"),
+            Type::String => format!("{indent}Type(String)"),
+            Type::Range { start_val, end_val } => {
+                format!(
+                    "{indent}Type(Range)\n{}\n{}",
+                    self.visit_expr(*start_val, level + 1),
+                    self.visit_expr(*end_val, level + 1)
+                )
+            }
+            Type::Alias(v) => format!("{indent}TypeAlias({v})"),
+            Type::Enum { items } => format!(
+                "{indent}Type(Enum)\n{}",
+                items
+                    .iter()
+                    .map(|i| { format!("{indent}  {i}") })
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ),
+            Type::Array {
+                index_type,
+                element_type,
+            } => {
+                format!(
+                    "{indent}Type(Array)\n{}\n{}",
+                    self.visit_type(*index_type, level + 1),
+                    self.visit_type(*element_type, level + 1)
+                )
+            }
+            Type::DynamicArray { element_type } => {
+                format!(
+                    "{indent}Type(DynamicArray)\n{}",
+                    self.visit_type(*element_type, level + 1)
+                )
+            }
+        }
+    }
     fn visit_stmt(&self, id: NodeId, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.stmt_pool.get(id) {
@@ -913,11 +1075,14 @@ impl Tree {
                 let right_str = self.visit_expr(*right, level + 1);
                 format!("{indent}Assign\n{left_str}\n{right_str}")
             }
-            Stmt::Compound(stmts) => stmts
-                .iter()
-                .map(|id| self.visit_stmt(*id, level + 1))
-                .collect::<Vec<String>>()
-                .join("\n"),
+            Stmt::Compound(stmts) => {
+                format!("{indent}Begin\n")
+                    + &stmts
+                        .iter()
+                        .map(|id| self.visit_stmt(*id, level + 1))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+            }
             Stmt::Break => format!("{indent}Break"),
             Stmt::Continue => format!("{indent}Continue"),
             Stmt::Exit(v) => {
@@ -1035,18 +1200,24 @@ impl Tree {
 
 impl Display for Tree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self.expr_pool.get(self.program.name) {
-            Expr::Var { name } => name,
-            _ => panic!("should be var"),
+        let mut result = format!("Program {}", self.program.name);
+        let decls = self
+            .program
+            .block
+            .declarations
+            .iter()
+            .map(|d| self.visit_declaraction(d, 0))
+            .collect::<Vec<String>>()
+            .join("\n");
+        if !decls.is_empty() {
+            result.push_str("\n");
+            result.push_str(&decls);
         };
-        let compund: String = match self.stmt_pool.get(self.program.block.statements) {
-            Stmt::Compound(stmts) => stmts,
-            _ => panic!("should be compund"),
+        let compound: String = self.visit_stmt(self.program.block.statements, 0);
+        if !compound.is_empty() {
+            result.push_str("\n");
+            result.push_str(&compound);
         }
-        .iter()
-        .map(|stmt| self.visit_stmt(*stmt, 1))
-        .collect::<Vec<String>>()
-        .join("\n");
-        write!(f, "Program {name}\n{compund}")
+        write!(f, "{result}")
     }
 }
