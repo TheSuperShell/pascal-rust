@@ -1,4 +1,4 @@
-use std::{fmt::Display, process::Command};
+use std::fmt::Display;
 
 use crate::{error::Error, lexer::Lexer, tokens::Token};
 
@@ -21,10 +21,6 @@ impl<T> NodePool<T> {
 
     pub fn get(&self, id: NodeId) -> &T {
         &self.0[id.0 as usize]
-    }
-
-    pub fn get_mut(&mut self, id: NodeId) -> &mut T {
-        &mut self.0[id.0 as usize]
     }
 }
 
@@ -298,7 +294,7 @@ impl Parser {
             Token::Continue => Ok(self.stmt_pool.alloc(Stmt::Continue)),
             Token::Break => Ok(self.stmt_pool.alloc(Stmt::Break)),
             Token::Begin => self.compound_statement(),
-            Token::Id(_) => match self.lexer.peek() {
+            Token::Id(_) => match self.lexer.current_char() {
                 Some('(') => self.call_statement(),
                 _ => self.assignment_statement(),
             },
@@ -544,7 +540,7 @@ impl Parser {
         let proc_name = self.id_str()?;
         self.eat(Token::LParen)?;
         let mut params = Vec::new();
-        if self.current_token != Token::LParen {
+        if self.current_token != Token::RParen {
             params.push(self.expr()?);
         }
         while let Token::Comma = self.current_token {
@@ -576,7 +572,7 @@ impl Parser {
             self.eat(Token::Comma)?;
             other_indicies.push(self.expr()?);
         }
-        self.eat(Token::LBracket)?;
+        self.eat(Token::RBracket)?;
         Ok(self.expr_pool.alloc(Expr::Index {
             base: var_node,
             index_value: expr,
@@ -632,9 +628,69 @@ impl Tree {
                 .iter()
                 .map(|id| self.visit_stmt(*id, level + 1))
                 .collect::<Vec<String>>()
-                .join(""),
-            Stmt::NoOp => indent,
-            _ => "stmt".to_string(),
+                .join("\n"),
+            Stmt::Break => format!("{indent}Break"),
+            Stmt::Continue => format!("{indent}Continue"),
+            Stmt::Exit(v) => {
+                let stmt = v.map(|v| self.visit_expr(v, level + 1));
+                match stmt {
+                    Some(v) => format!("{indent}Exit\n{v}"),
+                    None => format!("{indent}Exit"),
+                }
+            }
+            Stmt::For {
+                var,
+                init,
+                end,
+                body,
+            } => {
+                let init_str = self.visit_expr(*init, level + 1);
+                let end_str = self.visit_expr(*end, level + 1);
+                let body_str = self.visit_stmt(*body, level + 1);
+                format!(
+                    "{indent}For({var})\n{init_str}\n{indent}  To\n{end_str}\n{indent}Do\n{body_str}"
+                )
+            }
+            Stmt::If {
+                cond,
+                elifs,
+                else_statement,
+            } => {
+                let mut cond_str = format!(
+                    "{indent}If\n{}\n{indent}Then\n{}",
+                    self.visit_expr(cond.cond, level + 1),
+                    self.visit_stmt(cond.expr, level + 1)
+                );
+                let elifs_str = &elifs
+                    .iter()
+                    .map(|c| {
+                        format!(
+                            "{indent}ElseIf\n{}\n{indent}Then\n{}",
+                            self.visit_expr(c.cond, level + 1),
+                            self.visit_stmt(c.expr, level + 1)
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                if !elifs_str.is_empty() {
+                    cond_str.push_str("\n");
+                    cond_str.push_str(elifs_str);
+                }
+                let else_str = else_statement
+                    .map(|v| format!("{indent}Else\n{}", self.visit_stmt(v, level + 1)));
+                if let Some(v) = else_str {
+                    cond_str.push_str("\n");
+                    cond_str.push_str(&v);
+                }
+                cond_str
+            }
+            Stmt::While { cond, body } => format!(
+                "{indent}While\n{}\n{indent}Do\n{}",
+                self.visit_expr(*cond, level + 1),
+                self.visit_stmt(*body, level + 1)
+            ),
+            Stmt::NoOp => format!("{indent}NoOp"),
+            Stmt::Call { call } => self.visit_expr(*call, level),
         }
     }
     fn visit_expr(&self, id: NodeId, level: usize) -> String {
@@ -652,14 +708,38 @@ impl Tree {
             Expr::LiteralString(v) => format!("{indent}LitString(\"{v}\")"),
             Expr::Var { name } => format!("{indent}Var({name})"),
             Expr::Call { name, args } => {
+                let mut result = format!("{indent}Call({name})");
                 let param_str = args
                     .iter()
                     .map(|p| self.visit_expr(*p, level + 1))
                     .collect::<Vec<String>>()
                     .join("\n");
-                format!("{indent}Call({name})\n{param_str}")
+                if !param_str.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&param_str);
+                }
+                result
             }
-            _ => "expr".to_string(),
+            Expr::Index {
+                base,
+                index_value,
+                other_indicies,
+            } => {
+                let mut base_str = format!("{indent}Index({})\n", self.visit_expr(*base, 0));
+                let mut indicies = vec![self.visit_expr(*index_value, level + 1)];
+                indicies.extend(
+                    other_indicies
+                        .iter()
+                        .map(|v| self.visit_expr(*v, level + 1)),
+                );
+                base_str.push_str(&indicies.join("\n"));
+                base_str
+            }
+            Expr::UnaryOp { op, expr } => format!(
+                "{indent}UnaryOp\n{indent}  {:?}\n{}",
+                op,
+                self.visit_expr(*expr, level + 1)
+            ),
         }
     }
 }
