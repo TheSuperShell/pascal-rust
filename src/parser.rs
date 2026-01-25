@@ -229,7 +229,9 @@ impl Parser {
 
     fn id_str(&mut self) -> Result<String, Error> {
         if let Token::Id(id) = &self.current_token {
-            return Ok(id.clone());
+            let id = id.clone();
+            self.current_token = self.lexer.next()?;
+            return Ok(id);
         }
         Err(Error::ParserError {
             msg: format!("expected id, got {:?}", self.current_token),
@@ -524,15 +526,15 @@ impl Parser {
                 self.eat(Token::RParen)?;
                 return expr;
             }
-            Token::Id(_) => match self.lexer.peek() {
+            Token::Id(_) => match self.lexer.current_char() {
                 Some('(') => self.call_expr(),
                 Some('[') => self.index_of_statement(),
-                _ => Err(Error::ParserError {
-                    msg: "unexpected char after id".to_string(),
-                    error_code: None,
-                }),
+                _ => self.id(),
             },
-            _ => self.id(),
+            _ => Err(Error::ParserError {
+                msg: "unexpected factor".to_string(),
+                error_code: None,
+            }),
         }
     }
 
@@ -540,7 +542,6 @@ impl Parser {
     /// Id LParan expr (Comma expr)* RParan
     fn call_expr(&mut self) -> Result<NodeId, Error> {
         let proc_name = self.id_str()?;
-        self.current_token = self.lexer.next()?;
         self.eat(Token::LParen)?;
         let mut params = Vec::new();
         if self.current_token != Token::LParen {
@@ -650,6 +651,14 @@ impl Tree {
             Expr::LiteralReal(v) => format!("{indent}Lit({v})"),
             Expr::LiteralString(v) => format!("{indent}Lit({v})"),
             Expr::Var { name } => format!("{indent}Var({name})"),
+            Expr::Call { name, args } => {
+                let param_str = args
+                    .iter()
+                    .map(|p| self.visit_expr(*p, level + 1))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                format!("{indent}Call({name})\n{param_str}")
+            }
             _ => "expr".to_string(),
         }
     }

@@ -154,8 +154,7 @@ impl Lexer {
         self.advance();
         let current_index = self.index;
         while let (Some(c), Some(nc)) = (self.current_char, self.peek())
-            && nc == '\''
-            && c != '\\'
+            && !(nc == '\'' && c != '\\')
         {
             self.advance();
         }
@@ -171,5 +170,9 @@ impl Lexer {
             );
         }
         Token::StringConst(self.source_code[current_index..end_index].to_string())
+    }
+
+    pub fn current_char(&self) -> Option<char> {
+        self.current_char
     }
 }
