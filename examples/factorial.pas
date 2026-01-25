@@ -1,4 +1,12 @@
 program factorial;
+    const pi = 3.14;
+    type age = integer;
+    var my_age: age = 25;
+    function some_func(a, b: integer; c: real): string;
+    begin
+        c := a + b;
+        exit('value' + c)
+    end;
 begin
     a := (5 > 10) = true and b;
     b := a;

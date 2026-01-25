@@ -120,13 +120,13 @@ pub enum Decl {
     },
     Function {
         name: String,
-        block: NodeId,
+        block: Block,
         params: Vec<Param>,
         return_type: NodeId,
     },
     Procedure {
         name: String,
-        block: NodeId,
+        block: Block,
         params: Vec<Param>,
     },
 }
@@ -134,6 +134,7 @@ pub enum Decl {
 #[derive(Debug, Clone)]
 pub struct Param {
     var: NodeId,
+    out: bool,
     type_node: NodeId,
 }
 
@@ -144,6 +145,7 @@ pub enum Type {
     String,
     Char,
     Real,
+    Alias(String),
     Array {
         index_type: NodeId,
         element_type: NodeId,
@@ -255,7 +257,294 @@ impl Parser {
     /// function_declaration
     /// )*
     fn declarations(&mut self) -> Result<Vec<Decl>, Error> {
-        Ok(Vec::new())
+        let mut decls = Vec::new();
+        while matches!(
+            self.current_token,
+            Token::Const | Token::Type | Token::Var | Token::Function | Token::Procedure
+        ) {
+            match self.current_token {
+                Token::Const => {
+                    decls.extend(self.const_declaration()?);
+                    self.eat(Token::Semi)?;
+                    while let Token::Id(_) = self.current_token {
+                        decls.extend(self.const_declaration()?);
+                        self.eat(Token::Semi)?;
+                    }
+                }
+                Token::Type => {
+                    decls.extend(self.type_declaration()?);
+                    self.eat(Token::Semi)?;
+                    while let Token::Id(_) = self.current_token {
+                        decls.extend(self.type_declaration()?);
+                        self.eat(Token::Semi)?;
+                    }
+                }
+                Token::Var => {
+                    decls.extend(self.var_declaration()?);
+                    self.eat(Token::Semi)?;
+                    while let Token::Id(_) = self.current_token {
+                        decls.extend(self.var_declaration()?);
+                        self.eat(Token::Semi)?;
+                    }
+                }
+                Token::Procedure => decls.push(self.procedure_declaration()?),
+                Token::Function => decls.push(self.function_declaration()?),
+                _ => unreachable!(),
+            }
+        }
+        Ok(decls)
+    }
+
+    /// function_declaration:
+    /// Function id (LParen formal_parameter_list RParen)?
+    /// Colon type_spec Semi block Semi
+    fn function_declaration(&mut self) -> Result<Decl, Error> {
+        self.eat(Token::Function)?;
+        let func_name = self.id_str()?;
+        let params = match self.current_token {
+            Token::LParen => {
+                self.eat(Token::LParen)?;
+                let params = self.formal_parameter_list()?;
+                self.eat(Token::RParen)?;
+                params
+            }
+            _ => Vec::with_capacity(0),
+        };
+        self.eat(Token::Colon)?;
+        let return_type = self.type_spec()?;
+        self.eat(Token::Semi)?;
+        let block = self.block()?;
+        self.eat(Token::Semi)?;
+        Ok(Decl::Function {
+            name: func_name,
+            block,
+            params,
+            return_type,
+        })
+    }
+
+    /// var_declaration:
+    /// Var id (Comma id)* Colon type_spec (Equal literal)?
+    fn var_declaration(&mut self) -> Result<Vec<Decl>, Error> {
+        self.eat(Token::Var)?;
+        let mut vars = vec![self.id()?];
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            vars.push(self.id()?);
+        }
+        self.eat(Token::Colon)?;
+        let type_spec = self.type_spec()?;
+        let default_value = match self.current_token {
+            Token::Equal => {
+                self.eat(Token::Equal)?;
+                Some(self.literal()?)
+            }
+            _ => None,
+        };
+        Ok(vars
+            .iter()
+            .map(|n| Decl::VarDecl {
+                var: *n,
+                type_node: type_spec,
+                default_value,
+            })
+            .collect())
+    }
+
+    /// procedure_declaration:
+    /// Procedure id (LParen formal_parameter_list RParen)? Semi block Semi
+    fn procedure_declaration(&mut self) -> Result<Decl, Error> {
+        self.eat(Token::Procedure)?;
+        let proc_name = self.id_str()?;
+        let params = match self.current_token {
+            Token::LParen => {
+                self.eat(Token::LParen)?;
+                let params = self.formal_parameter_list()?;
+                self.eat(Token::RParen)?;
+                params
+            }
+            _ => Vec::with_capacity(0),
+        };
+        let block = self.block()?;
+        self.eat(Token::Semi)?;
+        Ok(Decl::Procedure {
+            name: proc_name,
+            block,
+            params,
+        })
+    }
+
+    /// formal_parameter_list:
+    /// formal_parameters (Semi formal_parameter_list)?
+    fn formal_parameter_list(&mut self) -> Result<Vec<Param>, Error> {
+        let mut params = self.formal_parameters()?;
+        if let Token::Semi = self.current_token {
+            self.eat(Token::Semi)?;
+            params.extend(self.formal_parameter_list()?);
+        };
+        Ok(params)
+    }
+
+    /// formal_parameters:
+    /// Out? id (Comma Out? id)* Colon type_spec
+    fn formal_parameters(&mut self) -> Result<Vec<Param>, Error> {
+        let out = match self.current_token {
+            Token::Out => {
+                self.eat(Token::Out)?;
+                true
+            }
+            _ => false,
+        };
+        let mut names = vec![(out, self.id()?)];
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            let out = match self.current_token {
+                Token::Out => {
+                    self.eat(Token::Out)?;
+                    true
+                }
+                _ => false,
+            };
+            names.push((out, self.id()?));
+        }
+        self.eat(Token::Colon)?;
+        let param_type = self.type_spec()?;
+        Ok(names
+            .iter()
+            .map(|(o, n)| Param {
+                var: *n,
+                out: *o,
+                type_node: param_type,
+            })
+            .collect())
+    }
+
+    /// const_declaration:
+    /// Const id (Comma id)* Eq literal
+    fn const_declaration(&mut self) -> Result<Vec<Decl>, Error> {
+        self.eat(Token::Const)?;
+        let mut names = vec![self.id()?];
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            names.push(self.id()?);
+        }
+        self.eat(Token::Equal)?;
+        let literal = self.literal()?;
+        Ok(names
+            .iter()
+            .map(|n| Decl::ConstDecl { var: *n, literal })
+            .collect())
+    }
+
+    /// type_declaration:
+    /// Type id (Comma id)* Equal type_spec
+    fn type_declaration(&mut self) -> Result<Vec<Decl>, Error> {
+        self.eat(Token::Type)?;
+        let mut names = vec![self.id()?];
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            names.push(self.id()?);
+        }
+        self.eat(Token::Equal)?;
+        let type_decl = self.type_spec()?;
+
+        Ok(names
+            .iter()
+            .map(|n| Decl::TypeDecl {
+                var: *n,
+                type_node: type_decl,
+            })
+            .collect())
+    }
+
+    /// type_spec:
+    /// Integer | Real | Boolean | String | Char |
+    /// enum_spec |
+    /// array_spec |
+    /// range_spec
+    fn type_spec(&mut self) -> Result<NodeId, Error> {
+        let token = self.current_token.clone();
+        match token {
+            Token::Id(v) => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Alias(v)))
+            }
+            Token::Integer => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Integer))
+            }
+            Token::Real => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Real))
+            }
+            Token::Boolean => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Boolean))
+            }
+            Token::String => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::String))
+            }
+            Token::Char => {
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Char))
+            }
+            Token::LParen => self.enum_spec(),
+            Token::Array => self.array_spec(),
+            _ => self.range_spec(),
+        }
+    }
+
+    /// enum_spec:
+    /// LParan id (Comma id)* RParan
+    fn enum_spec(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::LParen)?;
+        let mut items = vec![self.id_str()?];
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            items.push(self.id_str()?);
+        }
+        self.eat(Token::RParen)?;
+        Ok(self.type_pool.alloc(Type::Enum { items }))
+    }
+
+    /// array_spec:
+    /// Array (LBrack range_spec RBrack)? Of type_spec
+    fn array_spec(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::Array)?;
+        if let Token::LBracket = self.current_token {
+            self.eat(Token::LBracket)?;
+            let index_type = self.range_spec()?;
+            self.eat(Token::RBracket)?;
+            self.eat(Token::Of)?;
+            let element_type = self.type_spec()?;
+            return Ok(self.type_pool.alloc(Type::Array {
+                index_type,
+                element_type,
+            }));
+        };
+        self.eat(Token::Of)?;
+        let element_type = self.type_spec()?;
+        Ok(self.type_pool.alloc(Type::DynamicArray { element_type }))
+    }
+
+    /// range_spec:
+    /// (id | literal) Dot Dot (id | literal)
+    fn range_spec(&mut self) -> Result<NodeId, Error> {
+        let start = match self.current_token {
+            Token::Id(_) => self.id()?,
+            _ => self.literal()?,
+        };
+        self.eat(Token::Dot)?;
+        self.eat(Token::Dot)?;
+        let end = match self.current_token {
+            Token::Id(_) => self.id()?,
+            _ => self.literal()?,
+        };
+        Ok(self.type_pool.alloc(Type::Range {
+            start_val: start,
+            end_val: end,
+        }))
     }
 
     /// compound_statement:
@@ -590,7 +879,7 @@ impl Parser {
             Token::CharConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralChar(v))),
             Token::BooleanConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralBool(v))),
             _ => Err(Error::ParserError {
-                msg: "unkown literal".to_string(),
+                msg: format!("unkown literal {:?}", token),
                 error_code: None,
             }),
         }
