@@ -54,6 +54,7 @@ pub enum Expr {
     Index {
         base: NodeId,
         index_value: NodeId,
+        other_indicies: Vec<NodeId>,
     },
 }
 
@@ -67,9 +68,9 @@ pub enum Stmt {
     },
     NoOp,
     If {
-        cond: NodeId,
-        elifs: Vec<NodeId>,
-        else_statement: NodeId,
+        cond: Condition,
+        elifs: Vec<Condition>,
+        else_statement: Option<NodeId>,
     },
     While {
         cond: NodeId,
@@ -86,6 +87,12 @@ pub enum Stmt {
     Call {
         call: NodeId,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct Condition {
+    cond: NodeId,
+    expr: NodeId,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +227,16 @@ impl Parser {
         })
     }
 
+    fn id_str(&mut self) -> Result<String, Error> {
+        if let Token::Id(id) = &self.current_token {
+            return Ok(id.clone());
+        }
+        Err(Error::ParserError {
+            msg: format!("expected id, got {:?}", self.current_token),
+            error_code: None,
+        })
+    }
+
     /// block:
     /// declarations compound_statement
     fn block(&mut self) -> Result<Block, Error> {
@@ -276,9 +293,99 @@ impl Parser {
     /// NoOp
     fn statement(&mut self) -> Result<NodeId, Error> {
         match self.current_token {
-            Token::Id(_) => self.assignment_statement(),
+            Token::Continue => Ok(self.stmt_pool.alloc(Stmt::Continue)),
+            Token::Break => Ok(self.stmt_pool.alloc(Stmt::Break)),
+            Token::Begin => self.compound_statement(),
+            Token::Id(_) => match self.lexer.peek() {
+                Some('(') => self.call_statement(),
+                _ => self.assignment_statement(),
+            },
+            Token::If => self.if_statement(),
+            Token::While => self.while_statement(),
+            Token::For => self.for_statement(),
+            Token::Exit => self.exit_statement(),
             _ => Ok(self.stmt_pool.alloc(Stmt::NoOp)),
         }
+    }
+
+    /// exit_statement:
+    /// Exit (LParan exprt RParan)?
+    fn exit_statement(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::Exit)?;
+        let mut expr = None;
+        if let Token::LParen = self.current_token {
+            self.eat(Token::LParen)?;
+            expr = Some(self.expr()?);
+            self.eat(Token::RParen)?;
+        };
+        Ok(self.stmt_pool.alloc(Stmt::Exit(expr)))
+    }
+
+    /// for_statement:
+    /// For id Assign expr To expr Do statement
+    fn for_statement(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::For)?;
+        let var = self.id_str()?;
+        self.eat(Token::Assign)?;
+        let init_state = self.expr()?;
+        self.eat(Token::To)?;
+        let end_state = self.expr()?;
+        self.eat(Token::Do)?;
+        let expr = self.statement()?;
+        Ok(self.stmt_pool.alloc(Stmt::For {
+            var,
+            init: init_state,
+            end: end_state,
+            body: expr,
+        }))
+    }
+
+    /// while_statement:
+    /// While expr Do statement
+    fn while_statement(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::While)?;
+        let cond = self.expr()?;
+        self.eat(Token::Do)?;
+        let body = self.statement()?;
+        Ok(self.stmt_pool.alloc(Stmt::While { cond, body }))
+    }
+
+    /// if_statement:
+    /// If condition
+    /// (Else If condition)*
+    /// (Else statement)?
+    fn if_statement(&mut self) -> Result<NodeId, Error> {
+        self.eat(Token::If)?;
+        let main_cond = self.condition()?;
+        let mut other_conditions = Vec::new();
+        let mut last_conditition = None;
+        while let Token::Else = self.current_token {
+            self.eat(Token::Else)?;
+            match self.current_token {
+                Token::If => {
+                    self.eat(Token::If)?;
+                    other_conditions.push(self.condition()?);
+                }
+                _ => {
+                    last_conditition = Some(self.statement()?);
+                    break;
+                }
+            }
+        }
+        Ok(self.stmt_pool.alloc(Stmt::If {
+            cond: main_cond,
+            elifs: other_conditions,
+            else_statement: last_conditition,
+        }))
+    }
+
+    /// condition:
+    /// expr Then statement
+    fn condition(&mut self) -> Result<Condition, Error> {
+        let cond = self.expr()?;
+        self.eat(Token::Then)?;
+        let expr = self.statement()?;
+        Ok(Condition { cond, expr })
     }
 
     /// assignment_statement:
@@ -384,7 +491,7 @@ impl Parser {
     /// Not compare_statement |
     /// literal |
     /// OpenParan expr CloseParan |
-    /// call_statement |
+    /// call_expr |
     /// index_of_statement |
     /// variable
     fn factor(&mut self) -> Result<NodeId, Error> {
@@ -417,8 +524,63 @@ impl Parser {
                 self.eat(Token::RParen)?;
                 return expr;
             }
+            Token::Id(_) => match self.lexer.peek() {
+                Some('(') => self.call_expr(),
+                Some('[') => self.index_of_statement(),
+                _ => Err(Error::ParserError {
+                    msg: "unexpected char after id".to_string(),
+                    error_code: None,
+                }),
+            },
             _ => self.id(),
         }
+    }
+
+    /// call_expr:
+    /// Id LParan expr (Comma expr)* RParan
+    fn call_expr(&mut self) -> Result<NodeId, Error> {
+        let proc_name = self.id_str()?;
+        self.current_token = self.lexer.next()?;
+        self.eat(Token::LParen)?;
+        let mut params = Vec::new();
+        if self.current_token != Token::LParen {
+            params.push(self.expr()?);
+        }
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            params.push(self.expr()?);
+        }
+        self.eat(Token::RParen)?;
+        Ok(self.expr_pool.alloc(Expr::Call {
+            name: proc_name,
+            args: params,
+        }))
+    }
+
+    /// call_statement:
+    /// Id LParan expr (Comma expr)* RParan
+    fn call_statement(&mut self) -> Result<NodeId, Error> {
+        let call = self.call_expr()?;
+        Ok(self.stmt_pool.alloc(Stmt::Call { call }))
+    }
+
+    /// index_of_statement:
+    /// If LBracket expr (Comma expr)* RBracket
+    fn index_of_statement(&mut self) -> Result<NodeId, Error> {
+        let var_node = self.id()?;
+        self.eat(Token::LBracket)?;
+        let expr = self.expr()?;
+        let mut other_indicies = Vec::new();
+        while let Token::Comma = self.current_token {
+            self.eat(Token::Comma)?;
+            other_indicies.push(self.expr()?);
+        }
+        self.eat(Token::LBracket)?;
+        Ok(self.expr_pool.alloc(Expr::Index {
+            base: var_node,
+            index_value: expr,
+            other_indicies,
+        }))
     }
 
     fn literal(&mut self) -> Result<NodeId, Error> {
