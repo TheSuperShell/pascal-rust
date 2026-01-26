@@ -1,28 +1,15 @@
 use std::fmt::Display;
 
-use crate::{error::Error, lexer::Lexer, tokens::Token};
+use crate::{
+    error::Error,
+    lexer::Lexer,
+    tokens::Token,
+    utils::{NodePool, define_ref},
+};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct NodeId(u32);
-
-#[derive(Debug, Clone)]
-pub struct NodePool<T>(Vec<T>);
-
-impl<T> NodePool<T> {
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    pub fn alloc(&mut self, node: T) -> NodeId {
-        let id = NodeId(self.0.len() as u32);
-        self.0.push(node);
-        id
-    }
-
-    pub fn get(&self, id: NodeId) -> &T {
-        &self.0[id.0 as usize]
-    }
-}
+define_ref!(ExprRef);
+define_ref!(StmtRef);
+define_ref!(TypeRef);
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -31,8 +18,8 @@ pub enum Expr {
     },
     BinOp {
         op: Token,
-        left: NodeId,
-        right: NodeId,
+        left: ExprRef,
+        right: ExprRef,
     },
     LiteralInteger(i64),
     LiteralReal(f64),
@@ -41,16 +28,16 @@ pub enum Expr {
     LiteralString(String),
     UnaryOp {
         op: Token,
-        expr: NodeId,
+        expr: ExprRef,
     },
     Call {
         name: String,
-        args: Vec<NodeId>,
+        args: Vec<ExprRef>,
     },
     Index {
-        base: NodeId,
-        index_value: NodeId,
-        other_indicies: Vec<NodeId>,
+        base: ExprRef,
+        index_value: ExprRef,
+        other_indicies: Vec<ExprRef>,
     },
 }
 
@@ -59,36 +46,36 @@ pub enum Stmt {
     Break,
     Continue,
     Assign {
-        left: NodeId,
-        right: NodeId,
+        left: ExprRef,
+        right: ExprRef,
     },
     NoOp,
     If {
         cond: Condition,
         elifs: Vec<Condition>,
-        else_statement: Option<NodeId>,
+        else_statement: Option<StmtRef>,
     },
     While {
-        cond: NodeId,
-        body: NodeId,
+        cond: ExprRef,
+        body: StmtRef,
     },
     For {
         var: String,
-        init: NodeId,
-        end: NodeId,
-        body: NodeId,
+        init: ExprRef,
+        end: ExprRef,
+        body: StmtRef,
     },
-    Exit(Option<NodeId>),
-    Compound(Vec<NodeId>),
+    Exit(Option<ExprRef>),
+    Compound(Vec<StmtRef>),
     Call {
-        call: NodeId,
+        call: ExprRef,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct Condition {
-    cond: NodeId,
-    expr: NodeId,
+    cond: ExprRef,
+    expr: StmtRef,
 }
 
 #[derive(Debug, Clone)]
@@ -100,29 +87,29 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct Block {
     declarations: Vec<Decl>,
-    statements: NodeId,
+    statements: StmtRef,
 }
 
 #[derive(Debug, Clone)]
 pub enum Decl {
     VarDecl {
-        var: NodeId,
-        type_node: NodeId,
-        default_value: Option<NodeId>,
+        var: ExprRef,
+        type_node: TypeRef,
+        default_value: Option<ExprRef>,
     },
     TypeDecl {
-        var: NodeId,
-        type_node: NodeId,
+        var: ExprRef,
+        type_node: TypeRef,
     },
     ConstDecl {
-        var: NodeId,
-        literal: NodeId,
+        var: ExprRef,
+        literal: ExprRef,
     },
     Function {
         name: String,
         block: Block,
         params: Vec<Param>,
-        return_type: NodeId,
+        return_type: TypeRef,
     },
     Procedure {
         name: String,
@@ -133,9 +120,9 @@ pub enum Decl {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    var: NodeId,
+    var: ExprRef,
     out: bool,
-    type_node: NodeId,
+    type_node: TypeRef,
 }
 
 #[derive(Debug, Clone)]
@@ -147,15 +134,15 @@ pub enum Type {
     Real,
     Alias(String),
     Array {
-        index_type: NodeId,
-        element_type: NodeId,
+        index_type: TypeRef,
+        element_type: TypeRef,
     },
     DynamicArray {
-        element_type: NodeId,
+        element_type: TypeRef,
     },
     Range {
-        start_val: NodeId,
-        end_val: NodeId,
+        start_val: ExprRef,
+        end_val: ExprRef,
     },
     Enum {
         items: Vec<String>,
@@ -165,9 +152,9 @@ pub enum Type {
 pub struct Parser {
     lexer: Lexer,
     current_token: Token,
-    expr_pool: NodePool<Expr>,
-    stmt_pool: NodePool<Stmt>,
-    type_pool: NodePool<Type>,
+    expr_pool: NodePool<ExprRef, Expr>,
+    stmt_pool: NodePool<StmtRef, Stmt>,
+    type_pool: NodePool<TypeRef, Type>,
 }
 
 impl Parser {
@@ -213,7 +200,7 @@ impl Parser {
 
     /// id:
     /// ID
-    fn id(&mut self) -> Result<NodeId, Error> {
+    fn id(&mut self) -> Result<ExprRef, Error> {
         if let Token::Id(id) = &self.current_token {
             let id = id.clone();
             self.eat(Token::Id(id.clone()))?;
@@ -462,7 +449,7 @@ impl Parser {
     /// enum_spec |
     /// array_spec |
     /// range_spec
-    fn type_spec(&mut self) -> Result<NodeId, Error> {
+    fn type_spec(&mut self) -> Result<TypeRef, Error> {
         let token = self.current_token.clone();
         match token {
             Token::Id(v) => {
@@ -497,7 +484,7 @@ impl Parser {
 
     /// enum_spec:
     /// LParan id (Comma id)* RParan
-    fn enum_spec(&mut self) -> Result<NodeId, Error> {
+    fn enum_spec(&mut self) -> Result<TypeRef, Error> {
         self.eat(Token::LParen)?;
         let mut items = vec![self.id_str()?];
         while let Token::Comma = self.current_token {
@@ -510,7 +497,7 @@ impl Parser {
 
     /// array_spec:
     /// Array (LBrack range_spec RBrack)? Of type_spec
-    fn array_spec(&mut self) -> Result<NodeId, Error> {
+    fn array_spec(&mut self) -> Result<TypeRef, Error> {
         self.eat(Token::Array)?;
         if let Token::LBracket = self.current_token {
             self.eat(Token::LBracket)?;
@@ -530,7 +517,7 @@ impl Parser {
 
     /// range_spec:
     /// (id | literal) Dot Dot (id | literal)
-    fn range_spec(&mut self) -> Result<NodeId, Error> {
+    fn range_spec(&mut self) -> Result<TypeRef, Error> {
         let start = match self.current_token {
             Token::Id(_) => self.id()?,
             _ => self.literal()?,
@@ -549,7 +536,7 @@ impl Parser {
 
     /// compound_statement:
     /// Begin statement_list End
-    fn compound_statement(&mut self) -> Result<NodeId, Error> {
+    fn compound_statement(&mut self) -> Result<StmtRef, Error> {
         self.eat(Token::Begin)?;
         let statement_list = self.statement_list()?;
         self.eat(Token::End)?;
@@ -558,7 +545,7 @@ impl Parser {
 
     /// statement_list:
     /// statement (Semi statement)*
-    fn statement_list(&mut self) -> Result<Vec<NodeId>, Error> {
+    fn statement_list(&mut self) -> Result<Vec<StmtRef>, Error> {
         let mut statements = vec![self.statement()?];
         while let Token::Semi = self.current_token {
             self.eat(Token::Semi)?;
@@ -578,7 +565,7 @@ impl Parser {
     /// for_statement |
     /// exit_statement |
     /// NoOp
-    fn statement(&mut self) -> Result<NodeId, Error> {
+    fn statement(&mut self) -> Result<StmtRef, Error> {
         match self.current_token {
             Token::Continue => Ok(self.stmt_pool.alloc(Stmt::Continue)),
             Token::Break => Ok(self.stmt_pool.alloc(Stmt::Break)),
@@ -597,7 +584,7 @@ impl Parser {
 
     /// exit_statement:
     /// Exit (LParan exprt RParan)?
-    fn exit_statement(&mut self) -> Result<NodeId, Error> {
+    fn exit_statement(&mut self) -> Result<StmtRef, Error> {
         self.eat(Token::Exit)?;
         let mut expr = None;
         if let Token::LParen = self.current_token {
@@ -610,7 +597,7 @@ impl Parser {
 
     /// for_statement:
     /// For id Assign expr To expr Do statement
-    fn for_statement(&mut self) -> Result<NodeId, Error> {
+    fn for_statement(&mut self) -> Result<StmtRef, Error> {
         self.eat(Token::For)?;
         let var = self.id_str()?;
         self.eat(Token::Assign)?;
@@ -629,7 +616,7 @@ impl Parser {
 
     /// while_statement:
     /// While expr Do statement
-    fn while_statement(&mut self) -> Result<NodeId, Error> {
+    fn while_statement(&mut self) -> Result<StmtRef, Error> {
         self.eat(Token::While)?;
         let cond = self.expr()?;
         self.eat(Token::Do)?;
@@ -641,7 +628,7 @@ impl Parser {
     /// If condition
     /// (Else If condition)*
     /// (Else statement)?
-    fn if_statement(&mut self) -> Result<NodeId, Error> {
+    fn if_statement(&mut self) -> Result<StmtRef, Error> {
         self.eat(Token::If)?;
         let main_cond = self.condition()?;
         let mut other_conditions = Vec::new();
@@ -677,7 +664,7 @@ impl Parser {
 
     /// assignment_statement:
     /// id Assign expr
-    fn assignment_statement(&mut self) -> Result<NodeId, Error> {
+    fn assignment_statement(&mut self) -> Result<StmtRef, Error> {
         let var = self.id()?;
         self.eat(Token::Assign)?;
         let expr = self.expr()?;
@@ -689,7 +676,7 @@ impl Parser {
 
     /// expr:
     /// bool_expr (OR bool_expr)*
-    fn expr(&mut self) -> Result<NodeId, Error> {
+    fn expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.bool_expr()?;
         while let Token::Or = self.current_token {
             self.eat(Token::Or)?;
@@ -705,7 +692,7 @@ impl Parser {
 
     /// bool_expr:
     /// compare_expr (AND compare_expr)*
-    fn bool_expr(&mut self) -> Result<NodeId, Error> {
+    fn bool_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.compare_expr()?;
         while let Token::And = self.current_token {
             self.eat(Token::And)?;
@@ -721,7 +708,7 @@ impl Parser {
 
     /// compare_expr:
     /// add_expr (compare_token add_expr)*
-    fn compare_expr(&mut self) -> Result<NodeId, Error> {
+    fn compare_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.add_expr()?;
         while self.current_token.is_compare_operator() {
             let token = self.current_token.clone();
@@ -738,7 +725,7 @@ impl Parser {
 
     /// add_expr
     /// mult_expr ((Minus | Plus) mult_expr)*
-    fn add_expr(&mut self) -> Result<NodeId, Error> {
+    fn add_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.mult_expr()?;
         while matches!(self.current_token, Token::Plus | Token::Minus) {
             let token = self.current_token.clone();
@@ -755,7 +742,7 @@ impl Parser {
 
     /// mult_expr:
     /// factor ((Mult | Div | RealDiv) factor)*
-    fn mult_expr(&mut self) -> Result<NodeId, Error> {
+    fn mult_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.factor()?;
         while matches!(
             self.current_token,
@@ -781,7 +768,7 @@ impl Parser {
     /// call_expr |
     /// index_of_statement |
     /// variable
-    fn factor(&mut self) -> Result<NodeId, Error> {
+    fn factor(&mut self) -> Result<ExprRef, Error> {
         match self.current_token {
             Token::Plus | Token::Minus => {
                 let token = self.current_token.clone();
@@ -825,7 +812,7 @@ impl Parser {
 
     /// call_expr:
     /// Id LParan expr (Comma expr)* RParan
-    fn call_expr(&mut self) -> Result<NodeId, Error> {
+    fn call_expr(&mut self) -> Result<ExprRef, Error> {
         let proc_name = self.id_str()?;
         self.eat(Token::LParen)?;
         let mut params = Vec::new();
@@ -845,14 +832,14 @@ impl Parser {
 
     /// call_statement:
     /// Id LParan expr (Comma expr)* RParan
-    fn call_statement(&mut self) -> Result<NodeId, Error> {
+    fn call_statement(&mut self) -> Result<StmtRef, Error> {
         let call = self.call_expr()?;
         Ok(self.stmt_pool.alloc(Stmt::Call { call }))
     }
 
     /// index_of_statement:
     /// If LBracket expr (Comma expr)* RBracket
-    fn index_of_statement(&mut self) -> Result<NodeId, Error> {
+    fn index_of_statement(&mut self) -> Result<ExprRef, Error> {
         let var_node = self.id()?;
         self.eat(Token::LBracket)?;
         let expr = self.expr()?;
@@ -869,7 +856,7 @@ impl Parser {
         }))
     }
 
-    fn literal(&mut self) -> Result<NodeId, Error> {
+    fn literal(&mut self) -> Result<ExprRef, Error> {
         let token = self.current_token.clone();
         self.current_token = self.lexer.next()?;
         match token {
@@ -899,9 +886,9 @@ impl Parser {
 #[derive(Debug, Clone)]
 pub struct Tree {
     pub program: Program,
-    pub expr_pool: NodePool<Expr>,
-    pub stmt_pool: NodePool<Stmt>,
-    pub type_pool: NodePool<Type>,
+    pub expr_pool: NodePool<ExprRef, Expr>,
+    pub stmt_pool: NodePool<StmtRef, Stmt>,
+    pub type_pool: NodePool<TypeRef, Type>,
 }
 
 impl Tree {
@@ -1025,7 +1012,7 @@ impl Tree {
             }
         }
     }
-    fn visit_type(&self, id: NodeId, level: usize) -> String {
+    fn visit_type(&self, id: TypeRef, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.type_pool.get(id) {
             Type::Integer => format!("{indent}Type(Integer)"),
@@ -1067,7 +1054,7 @@ impl Tree {
             }
         }
     }
-    fn visit_stmt(&self, id: NodeId, level: usize) -> String {
+    fn visit_stmt(&self, id: StmtRef, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.stmt_pool.get(id) {
             Stmt::Assign { left, right } => {
@@ -1147,7 +1134,7 @@ impl Tree {
             Stmt::Call { call } => self.visit_expr(*call, level),
         }
     }
-    fn visit_expr(&self, id: NodeId, level: usize) -> String {
+    fn visit_expr(&self, id: ExprRef, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.expr_pool.get(id) {
             Expr::BinOp { op, left, right } => {

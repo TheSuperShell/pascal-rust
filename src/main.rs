@@ -1,7 +1,9 @@
 mod error;
 mod lexer;
 mod parser;
+mod symbols;
 mod tokens;
+mod utils;
 
 use lexer::Lexer;
 
