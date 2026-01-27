@@ -11,7 +11,7 @@ define_ref!(ExprRef);
 define_ref!(StmtRef);
 define_ref!(TypeRef);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Var {
         name: String,
@@ -80,14 +80,14 @@ pub struct Condition {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    name: String,
-    block: Block,
+    pub name: String,
+    pub block: Block,
 }
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    declarations: Vec<Decl>,
-    statements: StmtRef,
+    pub declarations: Vec<Decl>,
+    pub statements: StmtRef,
 }
 
 #[derive(Debug, Clone)]

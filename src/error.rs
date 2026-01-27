@@ -11,6 +11,10 @@ pub enum Error {
         msg: String,
         error_code: Option<ErrorCode>,
     },
+    SemanticError {
+        msg: String,
+        error_code: Option<ErrorCode>,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -21,6 +25,9 @@ impl std::fmt::Display for Error {
             }
             Error::ParserError { msg, error_code } => {
                 write!(f, "Parser Error {:?}: {}", error_code, msg)
+            }
+            Error::SemanticError { msg, error_code } => {
+                write!(f, "Semantic Error {:?}: {}", error_code, msg)
             }
         }
     }
