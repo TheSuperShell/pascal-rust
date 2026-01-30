@@ -26,6 +26,9 @@ where
     pub fn get(&self, id: Ref) -> &T {
         &self.items[id.into()]
     }
+    pub fn get_mut(&mut self, id: Ref) -> &mut T {
+        &mut self.items[id.into()]
+    }
 }
 
 macro_rules! define_ref {

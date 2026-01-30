@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use itertools::{EitherOrBoth, Itertools};
+
 use crate::{
     error::Error,
     parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type},
@@ -93,7 +95,14 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             Stmt::Call { call } => {
-                todo!()
+                let callable_expr = tree.expr_pool.get(*call);
+                match callable_expr {
+                    Expr::Call { name, args } => {
+                        self.visit_callable(tree, name, args)?;
+                        Ok(())
+                    }
+                    _ => panic!("unreachable"),
+                }
             }
             Stmt::Compound(stmts) => stmts
                 .iter()
@@ -245,14 +254,11 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Call { name, args } => {
-                let callable_symbol_ref = self.current_scope.lookup_callable(name, false).ok_or(
-                    Error::SemanticError {
-                        msg: format!("could not find callable {name}"),
+                self.visit_callable(tree, name, args)?
+                    .ok_or(Error::SemanticError {
+                        msg: "procedure cannot be used in an expression".to_string(),
                         error_code: None,
-                    },
-                )?;
-                let callable_symbol = self.semantic_metadata.callables.get(callable_symbol_ref);
-                todo!()
+                    })
             }
             Expr::Index {
                 base,
@@ -499,6 +505,62 @@ impl SemanticAnalyzer {
                 Ok(())
             }
         }
+    }
+    fn visit_callable(
+        &mut self,
+        tree: &Tree,
+        name: &str,
+        args: &Vec<ExprRef>,
+    ) -> Result<Option<TypeSymbol>, Error> {
+        let callable_symbol_ref =
+            self.current_scope
+                .lookup_callable(name, false)
+                .ok_or(Error::SemanticError {
+                    msg: format!("could not find callable {name}"),
+                    error_code: None,
+                })?;
+        let mut callable_symbol = self
+            .semantic_metadata
+            .callables
+            .get(callable_symbol_ref)
+            .clone();
+        for r in callable_symbol.params.iter_mut().zip_longest(args) {
+            match r {
+                itertools::EitherOrBoth::Both((p, _), i) => {
+                    let expr_type = self.visit_expr(*i, tree)?;
+                    let var_symbol = self.semantic_metadata.vars.get(*p);
+                    let param_type = match var_symbol {
+                        VarSymbol::Var {
+                            name: _,
+                            type_symbol,
+                        } => self.semantic_metadata.types.get(*type_symbol),
+                        _ => panic!("unreachable"),
+                    };
+                    if !assinable(&param_type, &expr_type) {
+                        return Err(Error::SemanticError {
+                            msg: "incorrect type".to_string(),
+                            error_code: None,
+                        });
+                    }
+                }
+                itertools::EitherOrBoth::Left(_) => {
+                    return Err(Error::SemanticError {
+                        msg: "not enough arguments".to_string(),
+                        error_code: None,
+                    });
+                }
+                itertools::EitherOrBoth::Right(_) => {
+                    return Err(Error::SemanticError {
+                        msg: "too many arguments".to_string(),
+                        error_code: None,
+                    });
+                }
+            }
+        }
+        let return_type = callable_symbol
+            .return_type
+            .map(|r| self.semantic_metadata.types.get(r).clone());
+        Ok(return_type)
     }
 }
 fn analyze_function(
