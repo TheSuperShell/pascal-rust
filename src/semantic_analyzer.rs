@@ -513,22 +513,32 @@ impl SemanticAnalyzer {
                     .get_mut_enclosing_scope()
                     .expect("there is always enclosing scope here")
                     .define_callable(name, callable_symbol_ref);
-                block
-                    .declarations
-                    .iter()
-                    .map(|d| self.visit_declaraction(d, tree))
-                    .collect::<Result<(), Error>>()?;
                 let statement = tree.stmt_pool.get(block.statements);
-                if let Some(_) = return_type {
+                if let Some(return_type_ref) = return_type {
                     let (return_assigned, can_fallthrough) =
-                        analyze_function(tree, name, statement, true)?;
+                        analyze_function(tree, name, statement, false)?;
                     if can_fallthrough && !return_assigned {
                         return Err(Error::SemanticError {
                             msg: "function may not return a result".to_string(),
                             error_code: None,
                         });
                     }
+                    let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
+                        name: "result".to_string(),
+                        type_symbol: return_type_ref,
+                    });
+                    self.current_scope.define_var("result", return_var);
+                    let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
+                        name: name.clone(),
+                        type_symbol: return_type_ref,
+                    });
+                    self.current_scope.define_var(name, return_var);
                 }
+                block
+                    .declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, tree))
+                    .collect::<Result<(), Error>>()?;
                 self.visit_stmt(block.statements, tree)?;
                 let enclosing_scope = *self
                     .current_scope
@@ -549,6 +559,12 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
+                if let Some(_) = self.current_scope.lookup_type(var_name, true) {
+                    return Err(Error::SemanticError {
+                        msg: format!("type {} is already defined", var_name),
+                        error_code: None,
+                    });
+                }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
                 self.current_scope.define_type(var_name, type_symbol_ref);
                 Ok(())
@@ -568,6 +584,12 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
+                if let Some(_) = self.current_scope.lookup_var(var_name, true) {
+                    return Err(Error::SemanticError {
+                        msg: format!("var {:?} is already defined", var_name),
+                        error_code: None,
+                    });
+                }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
                 let type_symbol = self.semantic_metadata.types.get(type_symbol_ref).clone();
 
@@ -678,10 +700,13 @@ fn analyze_function(
             if let Some(_) = e {
                 return Ok((true, false));
             }
-            Err(Error::SemanticError {
-                msg: "function exited without returning anything".to_string(),
-                error_code: None,
-            })
+            if !in_assigned {
+                return Err(Error::SemanticError {
+                    msg: "function exited without returning anything".to_string(),
+                    error_code: None,
+                });
+            }
+            Ok((in_assigned, true))
         }
         Stmt::Assign { left, right: _ } => {
             let left_expr = tree.expr_pool.get(*left);
@@ -759,7 +784,7 @@ fn analyze_function(
                     break;
                 }
                 let stmt = tree.stmt_pool.get(*stmt);
-                (assign, fall) = analyze_function(tree, function_name, stmt, in_assigned)?;
+                (assign, fall) = analyze_function(tree, function_name, stmt, assign)?;
             }
             Ok((assign, fall))
         }
