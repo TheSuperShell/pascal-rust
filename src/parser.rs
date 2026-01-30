@@ -74,8 +74,8 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub struct Condition {
-    cond: ExprRef,
-    expr: StmtRef,
+    pub cond: ExprRef,
+    pub expr: StmtRef,
 }
 
 #[derive(Debug, Clone)]
@@ -105,24 +105,19 @@ pub enum Decl {
         var: ExprRef,
         literal: ExprRef,
     },
-    Function {
+    Callable {
         name: String,
         block: Block,
         params: Vec<Param>,
-        return_type: TypeRef,
-    },
-    Procedure {
-        name: String,
-        block: Block,
-        params: Vec<Param>,
+        return_type: Option<TypeRef>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    var: ExprRef,
-    out: bool,
-    type_node: TypeRef,
+    pub var: ExprRef,
+    pub out: bool,
+    pub type_node: TypeRef,
 }
 
 #[derive(Debug, Clone)]
@@ -305,11 +300,11 @@ impl Parser {
         self.eat(Token::Semi)?;
         let block = self.block()?;
         self.eat(Token::Semi)?;
-        Ok(Decl::Function {
+        Ok(Decl::Callable {
             name: func_name,
             block,
             params,
-            return_type,
+            return_type: Some(return_type),
         })
     }
 
@@ -356,10 +351,11 @@ impl Parser {
         };
         let block = self.block()?;
         self.eat(Token::Semi)?;
-        Ok(Decl::Procedure {
+        Ok(Decl::Callable {
             name: proc_name,
             block,
             params,
+            return_type: None,
         })
     }
 
@@ -928,55 +924,16 @@ impl Tree {
                 };
                 result
             }
-            Decl::Procedure {
-                name,
-                block,
-                params,
-            } => {
-                let mut result = format!("{indent}Procedure({name})");
-                let params_str = params
-                    .iter()
-                    .map(|p| {
-                        format!(
-                            "{}{}\n{}",
-                            self.visit_expr(p.var, level + 1),
-                            match p.out {
-                                true => " Out",
-                                false => "",
-                            },
-                            self.visit_type(p.type_node, level + 2)
-                        )
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                if !params_str.is_empty() {
-                    result.push_str("\n");
-                    result.push_str(&params_str);
-                }
-                let decls_str = block
-                    .declarations
-                    .iter()
-                    .map(|d| self.visit_declaraction(d, level))
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                if !decls_str.is_empty() {
-                    result.push_str("\n");
-                    result.push_str(&decls_str);
-                }
-                result.push_str("\n");
-                result.push_str(&self.visit_stmt(block.statements, level));
-                result
-            }
-            Decl::Function {
+            Decl::Callable {
                 name,
                 block,
                 params,
                 return_type,
             } => {
-                let mut result = format!(
-                    "{indent}Function({name})\n{}",
-                    self.visit_type(*return_type, level + 1)
-                );
+                let mut result = format!("{indent}Callable({name})");
+                if let Some(r) = return_type {
+                    result.push_str(&format!("\n{}", self.visit_type(*r, level + 1)));
+                }
                 let params_str = params
                     .iter()
                     .map(|p| {

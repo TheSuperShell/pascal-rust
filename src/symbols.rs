@@ -49,11 +49,17 @@ pub enum CallableBody {
 }
 
 #[derive(Debug, Clone)]
+pub enum ParamMode {
+    Var,
+    Ref,
+}
+
+#[derive(Debug, Clone)]
 pub struct CallableSymbol {
-    name: String,
-    return_type: TypeSymbolRef,
-    params: Vec<VarSymbolRef>,
-    body: CallableBody,
+    pub name: String,
+    pub return_type: Option<TypeSymbolRef>,
+    pub params: Vec<(VarSymbolRef, ParamMode)>,
+    pub body: CallableBody,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +86,16 @@ impl SymbolTable {
             scope_name: scope_name.to_string(),
             enclosing_scope,
         }
+    }
+
+    pub fn get_scope_level(&self) -> usize {
+        self.scope_level
+    }
+    pub fn get_mut_enclosing_scope(&mut self) -> Option<&mut Box<SymbolTable>> {
+        self.enclosing_scope.as_mut()
+    }
+    pub fn move_out_of_scope(self) -> Option<SymbolTable> {
+        self.enclosing_scope.map(|v| *v)
     }
 
     pub fn define_type(&mut self, name: &str, symbol: TypeSymbolRef) {

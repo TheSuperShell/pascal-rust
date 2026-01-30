@@ -7,13 +7,15 @@ program factorial;
             three
         );
     var my_age: age = 25;
-    function some_func(a, b: integer; out c: real): string;
+    function some_func(a, b: integer; c: real): string;
     begin
         c := a + b;
-        exit('value' + c)
+        exit('value')
     end;
+    var c: string;
+    a, b: boolean;
 begin
-    a := (5 > 10) = true and b;
+    {a := (5 > 10) = true and b;
     b := a;
     c := some_fn('text' = 'other_text');
     for a := 0 to 35 do
@@ -29,5 +31,5 @@ begin
             a := true;
             b := false;
         end;
-    a := not b[1];
+    a := not b[1];}
 end.

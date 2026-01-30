@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     error::Error,
-    parser::{Decl, Expr, ExprRef, Stmt, Tree, Type},
+    parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type},
     symbols::{
-        CallableSymbol, CallableSymbolRef, ConstValue, SymbolTable, TypeSymbol, TypeSymbolRef,
-        VarSymbol, VarSymbolRef,
+        CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
+        TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     tokens::Token,
     utils::NodePool,
@@ -18,6 +18,7 @@ pub struct SemanticMetadata {
     pub callables: NodePool<CallableSymbolRef, CallableSymbol>,
 
     pub expr_type_map: HashMap<ExprRef, TypeSymbolRef>,
+    pub callable_blocks: HashMap<String, StmtRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ impl SemanticAnalyzer {
                 vars: NodePool::new(),
                 callables: NodePool::new(),
                 expr_type_map: HashMap::new(),
+                callable_blocks: HashMap::new(),
             },
             current_scope: SymbolTable::new(0, "global", None),
             loop_depth: 0,
@@ -134,7 +136,7 @@ impl SemanticAnalyzer {
                     self.current_scope
                         .lookup_var(name, false)
                         .ok_or(Error::SemanticError {
-                            msg: "unkown var".to_string(),
+                            msg: format!("unkown var {:?}", name),
                             error_code: None,
                         })?;
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
@@ -277,20 +279,92 @@ impl SemanticAnalyzer {
                 self.current_scope.define_var(var_name, const_symbol);
                 Ok(())
             }
-            Decl::Function {
+            Decl::Callable {
                 name,
                 block,
                 params,
                 return_type,
             } => {
-                todo!()
-            }
-            Decl::Procedure {
-                name,
-                block,
-                params,
-            } => {
-                todo!()
+                let current_scope = Box::new(self.current_scope.clone()); // TODO: figure out how to avoid cloning
+                self.current_scope = SymbolTable::new(
+                    self.current_scope.get_scope_level() + 1,
+                    &name,
+                    Some(current_scope),
+                );
+                let mut params_vec: Vec<(VarSymbolRef, ParamMode)> =
+                    Vec::with_capacity(params.len());
+                for param in params {
+                    let var_expr = tree.expr_pool.get(param.var);
+                    let type_node = tree.type_pool.get(param.type_node);
+                    let var_name = match var_expr {
+                        Expr::Var { name } => name,
+                        _ => {
+                            return Err(Error::SemanticError {
+                                msg: "expected var".to_string(),
+                                error_code: None,
+                            });
+                        }
+                    };
+                    let type_symbol = self.visit_type(type_node, tree)?;
+                    let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+                    let var_symbol = VarSymbol::Var {
+                        name: var_name.clone(),
+                        type_symbol: type_symbol_ref,
+                    };
+                    let var_symbol_ref = self.semantic_metadata.vars.alloc(var_symbol);
+                    self.current_scope.define_var(var_name, var_symbol_ref);
+                    let param_mode = match param.out {
+                        true => ParamMode::Ref,
+                        false => ParamMode::Var,
+                    };
+                    params_vec.push((var_symbol_ref, param_mode));
+                }
+                let return_type = match return_type {
+                    Some(return_type_ref) => {
+                        let return_type = tree.type_pool.get(*return_type_ref);
+                        let return_type = self.visit_type(return_type, tree)?;
+                        Some(self.semantic_metadata.types.alloc(return_type))
+                    }
+                    None => None,
+                };
+                let callable_symbol = CallableSymbol {
+                    name: name.clone(),
+                    params: params_vec,
+                    return_type,
+                    body: crate::symbols::CallableBody::BlockAST(block.statements),
+                };
+                let callable_symbol_ref = self.semantic_metadata.callables.alloc(callable_symbol);
+                self.current_scope
+                    .get_mut_enclosing_scope()
+                    .expect("there is always enclosing scope here")
+                    .define_callable(name.clone(), callable_symbol_ref);
+                block
+                    .declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, tree))
+                    .collect::<Result<(), Error>>()?;
+                let statement = tree.stmt_pool.get(block.statements);
+                if let Some(_) = return_type {
+                    let (return_assigned, can_fallthrough) =
+                        analyze_function(tree, name, statement, true)?;
+                    if can_fallthrough && !return_assigned {
+                        return Err(Error::SemanticError {
+                            msg: "function may not return a result".to_string(),
+                            error_code: None,
+                        });
+                    }
+                }
+                self.visit_stmt(statement, tree)?;
+                let enclosing_scope = *self
+                    .current_scope
+                    .get_mut_enclosing_scope()
+                    .expect("there is always enclosing scope here")
+                    .clone(); // TODO: figure out how to avoid cloning
+                self.current_scope = enclosing_scope;
+                self.semantic_metadata
+                    .callable_blocks
+                    .insert(name.clone(), block.statements);
+                Ok(())
             }
             Decl::TypeDecl { var, type_node } => {
                 let var = tree.expr_pool.get(*var);
@@ -353,6 +427,105 @@ impl SemanticAnalyzer {
                 Ok(())
             }
         }
+    }
+}
+fn analyze_function(
+    tree: &Tree,
+    function_name: &str,
+    stmt_node: &Stmt,
+    in_assigned: bool,
+) -> Result<(bool, bool), Error> {
+    match stmt_node {
+        Stmt::Exit(e) => {
+            if let Some(_) = e {
+                return Ok((true, false));
+            }
+            Err(Error::SemanticError {
+                msg: "function exited without returning anything".to_string(),
+                error_code: None,
+            })
+        }
+        Stmt::Assign { left, right: _ } => {
+            let left_expr = tree.expr_pool.get(*left);
+            match left_expr {
+                Expr::Var { name } => Ok((
+                    ["result", &function_name].contains(&name.as_str()) || in_assigned,
+                    true,
+                )),
+                _ => Err(Error::SemanticError {
+                    msg: "should be var".to_string(),
+                    error_code: None,
+                }),
+            }
+        }
+        Stmt::If {
+            cond,
+            elifs,
+            else_statement,
+        } => {
+            let mut thens = vec![analyze_function(
+                tree,
+                function_name,
+                tree.stmt_pool.get(cond.expr),
+                in_assigned,
+            )];
+            thens.extend(elifs.iter().map(
+                |Condition {
+                     cond: _,
+                     expr: expr_ref,
+                 }| {
+                    analyze_function(
+                        tree,
+                        function_name,
+                        tree.stmt_pool.get(*expr_ref),
+                        in_assigned,
+                    )
+                },
+            ));
+            match else_statement {
+                Some(stmt) => {
+                    thens.push(analyze_function(
+                        tree,
+                        function_name,
+                        tree.stmt_pool.get(*stmt),
+                        in_assigned,
+                    ));
+                }
+                None => thens.push(Ok((in_assigned, true))),
+            };
+            let thens = thens.into_iter().collect::<Result<Vec<_>, Error>>()?;
+            let fall = thens.iter().any(|(_, fall)| *fall);
+            let out = thens
+                .iter()
+                .fold(true, |v, (out, fall)| v && (!*fall | *out));
+            Ok((out, fall))
+        }
+        Stmt::While { cond: _, body } => {
+            analyze_function(tree, function_name, tree.stmt_pool.get(*body), in_assigned)?;
+            Ok((in_assigned, true))
+        }
+        Stmt::For {
+            var: _,
+            init: _,
+            end: _,
+            body,
+        } => {
+            analyze_function(tree, function_name, tree.stmt_pool.get(*body), in_assigned)?;
+            Ok((in_assigned, true))
+        }
+        Stmt::Compound(stmts) => {
+            let mut assign = in_assigned;
+            let mut fall = true;
+            for stmt in stmts {
+                if !fall {
+                    break;
+                }
+                let stmt = tree.stmt_pool.get(*stmt);
+                (assign, fall) = analyze_function(tree, function_name, stmt, in_assigned)?;
+            }
+            Ok((assign, fall))
+        }
+        _ => Ok((in_assigned, true)),
     }
 }
 
