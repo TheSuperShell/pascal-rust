@@ -6,8 +6,8 @@ use crate::{
     error::Error,
     parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
-        CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
-        TypeSymbolRef, VarSymbol, VarSymbolRef,
+        CallableBody, CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable,
+        TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     tokens::Token,
     utils::NodePool,
@@ -21,7 +21,7 @@ pub struct SemanticMetadata {
 
     pub expr_type_map: HashMap<ExprRef, TypeSymbolRef>,
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
-    pub callable_blocks: HashMap<String, StmtRef>,
+    pub callable_bodies: HashMap<ExprRef, CallableBody>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl SemanticAnalyzer {
                 callables: NodePool::new(),
                 type_type_map: HashMap::new(),
                 expr_type_map: HashMap::new(),
-                callable_blocks: HashMap::new(),
+                callable_bodies: HashMap::new(),
             },
             current_scope: SymbolTable::new(0, "global", None),
             loop_depth: 0,
@@ -100,7 +100,7 @@ impl SemanticAnalyzer {
                 let callable_expr = tree.expr_pool.get(*call);
                 match callable_expr {
                     Expr::Call { name, args } => {
-                        self.visit_callable(tree, name, args)?;
+                        self.visit_callable(&call, tree, name, args)?;
                         Ok(())
                     }
                     _ => panic!("unreachable"),
@@ -314,7 +314,7 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::Call { name, args } => {
-                self.visit_callable(tree, name, args)?
+                self.visit_callable(&node, tree, name, args)?
                     .ok_or(Error::SemanticError {
                         msg: "procedure cannot be used in an expression".to_string(),
                         error_code: None,
@@ -536,9 +536,6 @@ impl SemanticAnalyzer {
                     .expect("there is always enclosing scope here")
                     .clone(); // TODO: figure out how to avoid cloning
                 self.current_scope = enclosing_scope;
-                self.semantic_metadata
-                    .callable_blocks
-                    .insert(name.clone(), block.statements);
                 Ok(())
             }
             Decl::TypeDecl { var, type_node } => {
@@ -601,6 +598,7 @@ impl SemanticAnalyzer {
     }
     fn visit_callable(
         &mut self,
+        node: &ExprRef,
         tree: &Tree,
         name: &str,
         args: &Vec<ExprRef>,
@@ -653,6 +651,9 @@ impl SemanticAnalyzer {
         let return_type = callable_symbol
             .return_type
             .map(|r| self.semantic_metadata.types.get(r).clone());
+        self.semantic_metadata
+            .callable_bodies
+            .insert(*node, callable_symbol.body);
         Ok(return_type)
     }
     fn visit_condition(&mut self, cond: &Condition, tree: &Tree) -> Result<(), Error> {
