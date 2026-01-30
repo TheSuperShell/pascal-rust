@@ -15,9 +15,9 @@ program factorial;
     var c: string;
     a, b: boolean;
 begin
-    {a := (5 > 10) = true and b;
+    a := (5 > 10) = true and b;
     b := a;
-    c := some_fn('text' = 'other_text');
+    c := some_func('text' = 'other_text');
     for a := 0 to 35 do
         b := 10;
     if a > b then
@@ -31,5 +31,5 @@ begin
             a := true;
             b := false;
         end;
-    a := not b[1];}
+    a := not b[1];
 end.

@@ -64,10 +64,8 @@ impl SemanticAnalyzer {
     fn visit_stmt(&mut self, node: &Stmt, tree: &Tree) -> Result<(), Error> {
         match node {
             Stmt::Assign { left, right } => {
-                let left_expr = tree.expr_pool.get(*left);
-                let left_type = self.visit_expr(left_expr, tree)?;
-                let right_expr = tree.expr_pool.get(*right);
-                let right_type = self.visit_expr(right_expr, tree)?;
+                let left_type = self.visit_expr(*left, tree)?;
+                let right_type = self.visit_expr(*right, tree)?;
                 if !assinable(&left_type, &right_type) {
                     return Err(Error::SemanticError {
                         msg: "value not assignable".to_string(),
@@ -104,8 +102,7 @@ impl SemanticAnalyzer {
                 .collect::<Result<(), Error>>(),
             Stmt::Exit(v) => {
                 if let Some(expr_ref) = v {
-                    let expr = tree.expr_pool.get(*expr_ref);
-                    self.visit_expr(expr, tree)?;
+                    self.visit_expr(*expr_ref, tree)?;
                 }
                 Ok(())
             }
@@ -124,8 +121,8 @@ impl SemanticAnalyzer {
             } => todo!(),
         }
     }
-    fn visit_expr(&mut self, node: &Expr, tree: &Tree) -> Result<TypeSymbol, Error> {
-        match node {
+    fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbol, Error> {
+        match tree.expr_pool.get(node) {
             Expr::LiteralBool(_) => Ok(TypeSymbol::Boolean),
             Expr::LiteralChar(_) => Ok(TypeSymbol::Char),
             Expr::LiteralInteger(_) => Ok(TypeSymbol::Integer),
@@ -154,10 +151,89 @@ impl SemanticAnalyzer {
                     },
                 }
             }
-            Expr::BinOp { op, left, right } => todo!(),
+            Expr::BinOp { op, left, right } => {
+                let left_type = self.visit_expr(*left, tree)?;
+                let right_type = self.visit_expr(*right, tree)?;
+                let type_symbol = match op {
+                    Token::Minus | Token::RealDiv | Token::Mul => match (&left_type, &right_type) {
+                        (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
+                        (
+                            TypeSymbol::Real | TypeSymbol::Integer,
+                            TypeSymbol::Real | TypeSymbol::Integer,
+                        ) => Ok(TypeSymbol::Real),
+                        _ => Err(Error::SemanticError {
+                            msg: format!(
+                                "operator {:?} is not supported for {:?} and {:?}",
+                                op, left_type, right_type
+                            ),
+                            error_code: None,
+                        }),
+                    },
+                    Token::IntegerDiv => match (&left_type, &right_type) {
+                        (TypeSymbol::Integer | TypeSymbol::Real, TypeSymbol::Integer) => {
+                            Ok(TypeSymbol::Integer)
+                        }
+                        _ => Err(Error::SemanticError {
+                            msg: format!(
+                                "integer division is not supported for {:?} and {:?}",
+                                left_type, right_type
+                            ),
+                            error_code: None,
+                        }),
+                    },
+                    Token::Plus => match (&left_type, &right_type) {
+                        (TypeSymbol::String, TypeSymbol::String | TypeSymbol::Char) => {
+                            Ok(TypeSymbol::String)
+                        }
+                        (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
+                        (
+                            TypeSymbol::Real | TypeSymbol::Integer,
+                            TypeSymbol::Real | TypeSymbol::Integer,
+                        ) => Ok(TypeSymbol::Real),
+                        _ => Err(Error::SemanticError {
+                            msg: format!(
+                                "+ is not supported for {:?} and {:?}",
+                                left_type, right_type
+                            ),
+                            error_code: None,
+                        }),
+                    },
+                    Token::GreaterThen
+                    | Token::GreaterEqual
+                    | Token::LessEqual
+                    | Token::LessThen => match (left_type, right_type) {
+                        (
+                            TypeSymbol::Integer | TypeSymbol::Real,
+                            TypeSymbol::Integer | TypeSymbol::Real,
+                        ) => Ok(TypeSymbol::Boolean),
+                        _ => Err(Error::SemanticError {
+                            msg: format!(
+                                "compare operator is only supported for numberical values"
+                            ),
+                            error_code: None,
+                        }),
+                    },
+                    Token::Equal | Token::NotEqual => Ok(TypeSymbol::Boolean),
+                    Token::And | Token::Or => match (left_type, right_type) {
+                        (TypeSymbol::Boolean, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
+                        _ => Err(Error::SemanticError {
+                            msg: format!("operator AND and OR are only supported for booleans"),
+                            error_code: None,
+                        }),
+                    },
+                    _ => Err(Error::SemanticError {
+                        msg: format!("unsupported binary operaotr {:?}", op),
+                        error_code: None,
+                    }),
+                }?;
+                let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol.clone());
+                self.semantic_metadata
+                    .expr_type_map
+                    .insert(node, type_symbol_ref);
+                Ok(type_symbol)
+            }
             Expr::UnaryOp { op, expr: expr_ref } => {
-                let expr = tree.expr_pool.get(*expr_ref);
-                let expr_type = self.visit_expr(expr, tree)?;
+                let expr_type = self.visit_expr(*expr_ref, tree)?;
                 match (op, expr_type) {
                     (Token::Not, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                     (Token::Minus | Token::Plus, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
@@ -223,11 +299,8 @@ impl SemanticAnalyzer {
                 Ok(TypeSymbol::DynamicArray(element_type))
             }
             Type::Range { start_val, end_val } => {
-                let start_val = tree.expr_pool.get(*start_val);
-                let start_val_type = self.visit_expr(start_val, tree)?;
-
-                let end_val = tree.expr_pool.get(*end_val);
-                let end_val_type = self.visit_expr(end_val, tree)?;
+                let start_val_type = self.visit_expr(*start_val, tree)?;
+                let end_val_type = self.visit_expr(*end_val, tree)?;
 
                 if start_val_type != end_val_type {
                     return Err(Error::SemanticError {
@@ -337,7 +410,7 @@ impl SemanticAnalyzer {
                 self.current_scope
                     .get_mut_enclosing_scope()
                     .expect("there is always enclosing scope here")
-                    .define_callable(name.clone(), callable_symbol_ref);
+                    .define_callable(name, callable_symbol_ref);
                 block
                     .declarations
                     .iter()
@@ -402,8 +475,7 @@ impl SemanticAnalyzer {
                 let type_symbol = self.visit_type(type_node, tree)?;
 
                 if let Some(expr) = default_value {
-                    let default_value = tree.expr_pool.get(*expr);
-                    let default_type = self.visit_expr(default_value, tree)?;
+                    let default_type = self.visit_expr(*expr, tree)?;
                     if default_type != type_symbol {
                         return Err(Error::SemanticError {
                             msg: "default value should have the correct type".to_string(),

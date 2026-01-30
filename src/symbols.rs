@@ -99,29 +99,37 @@ impl SymbolTable {
     }
 
     pub fn define_type(&mut self, name: &str, symbol: TypeSymbolRef) {
-        self.type_symbols.insert(name.to_string(), symbol);
+        self.type_symbols.insert(name.to_lowercase(), symbol);
     }
 
     pub fn define_var(&mut self, name: &str, symbol: VarSymbolRef) {
-        self.var_symbols.insert(name.to_string(), symbol);
+        self.var_symbols.insert(name.to_lowercase(), symbol);
     }
-    pub fn define_callable(&mut self, name: String, symbol: CallableSymbolRef) {
-        self.callable_symbols.insert(name, symbol);
+    pub fn define_callable(&mut self, name: &str, symbol: CallableSymbolRef) {
+        self.callable_symbols.insert(name.to_lowercase(), symbol);
     }
 
     pub fn lookup_type(&self, name: &str, current_scope_only: bool) -> Option<TypeSymbolRef> {
+        let name = &name.to_lowercase();
         if self.type_symbols.contains_key(name) {
             return Some(self.type_symbols[name]);
         };
+        if current_scope_only {
+            return None;
+        }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_type(name, current_scope_only);
         };
         None
     }
     pub fn lookup_var(&self, name: &str, current_scope_only: bool) -> Option<VarSymbolRef> {
+        let name = &name.to_lowercase();
         if self.var_symbols.contains_key(name) {
             return Some(self.var_symbols[name]);
         };
+        if current_scope_only {
+            return None;
+        }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_var(name, current_scope_only);
         };
@@ -132,9 +140,13 @@ impl SymbolTable {
         name: &str,
         current_scope_only: bool,
     ) -> Option<CallableSymbolRef> {
-        if self.var_symbols.contains_key(name) {
+        let name = &name.to_lowercase();
+        if self.callable_symbols.contains_key(name) {
             return Some(self.callable_symbols[name]);
         };
+        if current_scope_only {
+            return None;
+        }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_callable(name, current_scope_only);
         };
