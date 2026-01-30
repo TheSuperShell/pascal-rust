@@ -63,6 +63,7 @@ pub struct CallableSymbol {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SymbolTable {
     type_symbols: HashMap<String, TypeSymbolRef>,
     var_symbols: HashMap<String, VarSymbolRef>,
@@ -93,9 +94,6 @@ impl SymbolTable {
     }
     pub fn get_mut_enclosing_scope(&mut self) -> Option<&mut Box<SymbolTable>> {
         self.enclosing_scope.as_mut()
-    }
-    pub fn move_out_of_scope(self) -> Option<SymbolTable> {
-        self.enclosing_scope.map(|v| *v)
     }
 
     pub fn define_type(&mut self, name: &str, symbol: TypeSymbolRef) {

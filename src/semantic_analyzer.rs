@@ -59,12 +59,12 @@ impl SemanticAnalyzer {
             .iter()
             .map(|d| self.visit_declaraction(d, tree))
             .collect::<Result<(), Error>>()?;
-        self.visit_stmt(compund, tree)?;
+        self.visit_stmt(tree.program.block.statements, tree)?;
         Ok(self.semantic_metadata)
     }
 
-    fn visit_stmt(&mut self, node: &Stmt, tree: &Tree) -> Result<(), Error> {
-        match node {
+    fn visit_stmt(&mut self, node: StmtRef, tree: &Tree) -> Result<(), Error> {
+        match tree.stmt_pool.get(node) {
             Stmt::Assign { left, right } => {
                 let left_type = self.visit_expr(*left, tree)?;
                 let right_type = self.visit_expr(*right, tree)?;
@@ -106,8 +106,7 @@ impl SemanticAnalyzer {
             }
             Stmt::Compound(stmts) => stmts
                 .iter()
-                .map(|s| tree.stmt_pool.get(*s))
-                .map(|s| self.visit_stmt(s, tree))
+                .map(|s| self.visit_stmt(*s, tree))
                 .collect::<Result<(), Error>>(),
             Stmt::Exit(v) => {
                 if let Some(expr_ref) = v {
@@ -120,14 +119,75 @@ impl SemanticAnalyzer {
                 cond,
                 elifs,
                 else_statement,
-            } => todo!(),
-            Stmt::While { cond, body } => todo!(),
+            } => {
+                self.visit_condition(cond, tree)?;
+                elifs
+                    .iter()
+                    .map(|c| self.visit_condition(c, tree))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                if let Some(stmt) = else_statement {
+                    self.visit_stmt(*stmt, tree)?;
+                }
+                Ok(())
+            }
+            Stmt::While { cond, body } => {
+                if !matches!(self.visit_expr(*cond, tree)?, TypeSymbol::Boolean) {
+                    return Err(Error::SemanticError {
+                        msg: "condition should be a boolean".to_string(),
+                        error_code: None,
+                    });
+                };
+                self.loop_depth += 1;
+                self.visit_stmt(*body, tree)?;
+                self.loop_depth -= 1;
+                Ok(())
+            }
             Stmt::For {
                 var,
                 init,
                 end,
                 body,
-            } => todo!(),
+            } => {
+                let var_node = self.semantic_metadata.vars.get(
+                    self.current_scope
+                        .lookup_var(var, false)
+                        .ok_or(Error::SemanticError {
+                            msg: "unkown_var".to_string(),
+                            error_code: None,
+                        })?,
+                );
+                let var_type = match var_node {
+                    VarSymbol::Var {
+                        name: _,
+                        type_symbol,
+                    } => self.semantic_metadata.types.get(*type_symbol),
+                    _ => {
+                        return Err(Error::SemanticError {
+                            msg: "const cannot be used here".to_string(),
+                            error_code: None,
+                        });
+                    }
+                }
+                .clone();
+                let init_state_type = self.visit_expr(*init, tree)?;
+                let end_state_type = self.visit_expr(*end, tree)?;
+                if init_state_type != end_state_type {
+                    return Err(Error::SemanticError {
+                        msg: "init and end of for should have the same type".to_string(),
+                        error_code: None,
+                    });
+                }
+                if var_type != init_state_type {
+                    return Err(Error::SemanticError {
+                        msg: "variable type should be the same as limit types".to_string(),
+                        error_code: None,
+                    });
+                }
+                self.loop_depth += 1;
+                self.visit_stmt(*body, tree)?;
+                self.loop_depth -= 1;
+                Ok(())
+            }
         }
     }
     fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbol, Error> {
@@ -468,7 +528,7 @@ impl SemanticAnalyzer {
                         });
                     }
                 }
-                self.visit_stmt(statement, tree)?;
+                self.visit_stmt(block.statements, tree)?;
                 let enclosing_scope = *self
                     .current_scope
                     .get_mut_enclosing_scope()
@@ -596,6 +656,16 @@ impl SemanticAnalyzer {
             .return_type
             .map(|r| self.semantic_metadata.types.get(r).clone());
         Ok(return_type)
+    }
+    fn visit_condition(&mut self, cond: &Condition, tree: &Tree) -> Result<(), Error> {
+        if !matches!(self.visit_expr(cond.cond, tree)?, TypeSymbol::Boolean) {
+            return Err(Error::SemanticError {
+                msg: "condition should be boolean".to_string(),
+                error_code: None,
+            });
+        };
+        self.visit_stmt(cond.expr, tree)?;
+        Ok(())
     }
 }
 fn analyze_function(
