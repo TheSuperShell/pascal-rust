@@ -367,7 +367,7 @@ impl SemanticAnalyzer {
             .insert(node, type_symbol_ref);
         Ok(type_symbol)
     }
-    fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbol, Error> {
+    fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let type_symbol = match tree.type_pool.get(node) {
             Type::Integer => Ok(TypeSymbol::Integer),
             Type::Real => Ok(TypeSymbol::Real),
@@ -391,9 +391,7 @@ impl SemanticAnalyzer {
                 element_type,
             } => {
                 let index_type = self.visit_type(*index_type, tree)?;
-                let index_type = self.semantic_metadata.types.alloc(index_type);
                 let element_type = self.visit_type(*element_type, tree)?;
-                let element_type = self.semantic_metadata.types.alloc(element_type);
                 Ok(TypeSymbol::Array {
                     index_type,
                     value_type: element_type,
@@ -401,7 +399,6 @@ impl SemanticAnalyzer {
             }
             Type::DynamicArray { element_type } => {
                 let element_type = self.visit_type(*element_type, tree)?;
-                let element_type = self.semantic_metadata.types.alloc(element_type);
                 Ok(TypeSymbol::DynamicArray(element_type))
             }
             Type::Range { start_val, end_val } => {
@@ -423,7 +420,7 @@ impl SemanticAnalyzer {
         self.semantic_metadata
             .type_type_map
             .insert(node, type_symbol_ref);
-        Ok(type_symbol)
+        Ok(type_symbol_ref)
     }
 
     fn visit_declaraction(&mut self, decl: &Decl, tree: &Tree) -> Result<(), Error> {
@@ -488,8 +485,7 @@ impl SemanticAnalyzer {
                             });
                         }
                     };
-                    let type_symbol = self.visit_type(param.type_node, tree)?;
-                    let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+                    let type_symbol_ref = self.visit_type(param.type_node, tree)?;
                     let var_symbol = VarSymbol::Var {
                         name: var_name.clone(),
                         type_symbol: type_symbol_ref,
@@ -503,10 +499,7 @@ impl SemanticAnalyzer {
                     params_vec.push((var_symbol_ref, param_mode));
                 }
                 let return_type = match return_type {
-                    Some(return_type_ref) => {
-                        let return_type = self.visit_type(*return_type_ref, tree)?;
-                        Some(self.semantic_metadata.types.alloc(return_type))
-                    }
+                    Some(return_type_ref) => Some(self.visit_type(*return_type_ref, tree)?),
                     None => None,
                 };
                 let callable_symbol = CallableSymbol {
@@ -559,8 +552,7 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                let type_symbol = self.visit_type(*type_node, tree)?;
-                let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+                let type_symbol_ref = self.visit_type(*type_node, tree)?;
                 self.current_scope.define_type(var_name, type_symbol_ref);
                 Ok(())
             }
@@ -579,7 +571,8 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                let type_symbol = self.visit_type(*type_node, tree)?;
+                let type_symbol_ref = self.visit_type(*type_node, tree)?;
+                let type_symbol = self.semantic_metadata.types.get(type_symbol_ref).clone();
 
                 if let Some(expr) = default_value {
                     let default_type = self.visit_expr(*expr, tree)?;
@@ -591,7 +584,6 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
                 let var_symbol =
                     self.semantic_metadata
                         .vars
