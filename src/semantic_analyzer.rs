@@ -263,8 +263,43 @@ impl SemanticAnalyzer {
             Expr::Index {
                 base,
                 index_value,
-                other_indicies,
-            } => todo!(),
+                other_indicies: _, // TODO: handle other indicies
+            } => {
+                let actual_index_type = self.visit_expr(*index_value, tree)?;
+                let var_type = self.visit_expr(*base, tree)?;
+                let base_type = self.semantic_metadata.types.get(match var_type {
+                    TypeSymbol::Array {
+                        index_type: index_type_ref,
+                        value_type,
+                    } => {
+                        let index_type = self.semantic_metadata.types.get(index_type_ref);
+                        if *index_type != actual_index_type {
+                            return Err(Error::SemanticError {
+                                msg: "index type is incorrect".to_string(),
+                                error_code: None,
+                            });
+                        }
+                        value_type
+                    }
+                    TypeSymbol::DynamicArray(v) => {
+                        if !matches!(actual_index_type, TypeSymbol::Integer) {
+                            return Err(Error::SemanticError {
+                                msg: "dynamic array index should be integer".to_string(),
+                                error_code: None,
+                            });
+                        }
+                        v
+                    }
+                    _ => {
+                        return Err(Error::SemanticError {
+                            msg: "base of indexable should be array".to_string(),
+                            error_code: None,
+                        });
+                    }
+                });
+
+                Ok(base_type.clone())
+            }
         }
     }
     fn visit_type(&mut self, node: &Type, tree: &Tree) -> Result<TypeSymbol, Error> {
@@ -526,7 +561,7 @@ impl SemanticAnalyzer {
             .clone();
         for r in callable_symbol.params.iter_mut().zip_longest(args) {
             match r {
-                itertools::EitherOrBoth::Both((p, _), i) => {
+                EitherOrBoth::Both((p, _), i) => {
                     let expr_type = self.visit_expr(*i, tree)?;
                     let var_symbol = self.semantic_metadata.vars.get(*p);
                     let param_type = match var_symbol {
@@ -543,13 +578,13 @@ impl SemanticAnalyzer {
                         });
                     }
                 }
-                itertools::EitherOrBoth::Left(_) => {
+                EitherOrBoth::Left(_) => {
                     return Err(Error::SemanticError {
                         msg: "not enough arguments".to_string(),
                         error_code: None,
                     });
                 }
-                itertools::EitherOrBoth::Right(_) => {
+                EitherOrBoth::Right(_) => {
                     return Err(Error::SemanticError {
                         msg: "too many arguments".to_string(),
                         error_code: None,
