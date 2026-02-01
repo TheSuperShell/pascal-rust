@@ -10,7 +10,6 @@ program factorial;
     function some_func(a, b: integer; c: real): string;
     begin
         c := a + b;
-        some_func := 'value'
     end;
     var c: string;
     a, b: boolean;

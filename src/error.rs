@@ -15,6 +15,9 @@ pub enum Error {
         msg: String,
         error_code: Option<ErrorCode>,
     },
+    InterpreterError {
+        msg: String,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -28,6 +31,9 @@ impl std::fmt::Display for Error {
             }
             Error::SemanticError { msg, error_code } => {
                 write!(f, "Semantic Error {:?}: {}", error_code, msg)
+            }
+            Error::InterpreterError { msg } => {
+                write!(f, "Interpreter Error: {}", msg)
             }
         }
     }
