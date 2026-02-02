@@ -19,6 +19,7 @@ fn main() -> Result<(), Error> {
     let lexer = Lexer::new(&source_code);
     let mut parser = Parser::new(lexer)?;
     let tree = parser.parse()?;
+    // println!("{tree}");
     let semantic_analyzer = SemanticAnalyzer::new();
     let semantic_metadata = semantic_analyzer.analyze(&tree)?;
     Interpreter::new().interperet(&tree, &semantic_metadata)?;

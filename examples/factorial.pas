@@ -20,7 +20,14 @@ begin
     my_age := 1000;
     writeln(my_age);
     for i := 0 to 100 do
-        arr[i] := i * i;
+        begin
+            if i > 50  then
+                begin
+                    arr[i] := 50;
+                    continue;
+                end;
+            arr[i] := i * i;
+        end;
     writeln(arr);
     a := (5 > 10) = true and b;
     writeln(a);

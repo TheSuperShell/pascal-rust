@@ -563,8 +563,14 @@ impl Parser {
     /// NoOp
     fn statement(&mut self) -> Result<StmtRef, Error> {
         match self.current_token {
-            Token::Continue => Ok(self.stmt_pool.alloc(Stmt::Continue)),
-            Token::Break => Ok(self.stmt_pool.alloc(Stmt::Break)),
+            Token::Continue => {
+                self.eat(Token::Continue)?;
+                Ok(self.stmt_pool.alloc(Stmt::Continue))
+            }
+            Token::Break => {
+                self.eat(Token::Break)?;
+                Ok(self.stmt_pool.alloc(Stmt::Break))
+            }
             Token::Begin => self.compound_statement(),
             Token::Id(_) => match self.lexer.current_char() {
                 Some('(') => self.call_statement(),
@@ -803,7 +809,7 @@ impl Parser {
                 _ => self.id(),
             },
             _ => Err(Error::ParserError {
-                msg: "unexpected factor".to_string(),
+                msg: format!("unexpected factor {:?}", self.current_token),
                 error_code: None,
             }),
         }

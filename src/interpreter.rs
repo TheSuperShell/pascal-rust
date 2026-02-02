@@ -8,7 +8,7 @@ use itertools::Itertools;
 
 use crate::{
     error::Error,
-    parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
+    parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
     symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
     tokens::Token,
@@ -99,6 +99,12 @@ pub struct ActivationRecord {
     name: String,
     nesting_level: usize,
     members: HashMap<String, Ref>,
+}
+
+impl ToString for ActivationRecord {
+    fn to_string(&self) -> String {
+        format!("Activation Record {} - {}", self.name, self.nesting_level)
+    }
 }
 
 impl ActivationRecord {
@@ -299,16 +305,17 @@ impl Interpreter {
                         index_value,
                         other_indicies: _,
                     } => {
-                        let index_value =
-                            match self.visit_expr(*index_value, tree, semantic_metadata)? {
-                                Value::Integer(i) => i as usize,
-                                _ => panic!(),
-                            };
+                        let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
+                        // let base_type_ref = semantic_metadata.expr_type_map.get(base).unwrap();
+                        // let range_symbol = self
+                        //     .range_symbols
+                        //     .get(*self.type_range_map.get(base_type_ref).unwrap());
+                        let index_value = index_value.ordinal_rank()?;
                         match tree.expr_pool.get(*base) {
                             Expr::Var { name } => self.call_stack.write(
                                 &LValue::ArrIndex {
                                     name: name,
-                                    index: index_value,
+                                    index: index_value as usize,
                                 },
                                 val,
                             )?,
@@ -361,7 +368,22 @@ impl Interpreter {
                 cond,
                 elifs,
                 else_statement,
-            } => todo!(),
+            } => {
+                let (cond, cr) = self.visit_condition(cond, tree, semantic_metadata)?;
+                if cond {
+                    return Ok(cr);
+                }
+                for cond in elifs {
+                    let (cond, cr) = self.visit_condition(cond, tree, semantic_metadata)?;
+                    if cond {
+                        return Ok(cr);
+                    }
+                }
+                if let Some(else_stmt) = else_statement {
+                    return self.visit_stmt(*else_stmt, tree, semantic_metadata);
+                }
+                Ok(ControlFlow::Continue(()))
+            }
             Stmt::For {
                 var,
                 init,
@@ -385,12 +407,31 @@ impl Interpreter {
                         }
                     }
                     i += 1;
+                    println!("{}", i);
                     self.call_stack
                         .write(&LValue::Ref { name: var }, type_symbol.oridnal_value(i)?)?;
                 }
                 Ok(ControlFlow::Continue(()))
             }
         }
+    }
+
+    fn visit_condition(
+        &mut self,
+        condition: &Condition,
+        tree: &Tree,
+        semantic_metadata: &SemanticMetadata,
+    ) -> Result<(bool, ControlFlow<Signal, ()>), Error> {
+        let cond = match self.visit_expr(condition.cond, tree, semantic_metadata)? {
+            Value::Boolean(b) => b,
+            _ => panic!(),
+        };
+        if cond {
+            return self
+                .visit_stmt(condition.expr, tree, semantic_metadata)
+                .map(|cr| (cond, cr));
+        }
+        Ok((cond, ControlFlow::Continue(())))
     }
 
     fn visit_expr(
@@ -445,21 +486,26 @@ impl Interpreter {
                 index_value,
                 other_indicies: _,
             } => {
+                let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
+                // let type_symbol_ref = semantic_metadata.expr_type_map.get(base).unwrap();
+                // let range_symbol = self
+                //     .range_symbols
+                //     .get(*self.type_range_map.get(type_symbol_ref).unwrap());
                 let var_name = match tree.expr_pool.get(*base) {
                     Expr::Var { name } => name,
                     _ => panic!("unreachable"),
                 };
-                let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
+                let index_value = index_value.ordinal_rank()?;
                 let arr_value = self
                     .call_stack
                     .lookup_value(var_name)
                     .expect("should exist");
-                match (arr_value, index_value) {
-                    (Value::Array(_), Value::Integer(i)) => Ok(self
+                match arr_value {
+                    Value::Array(_) => Ok(self
                         .call_stack
                         .read(&LValue::ArrIndex {
                             name: var_name,
-                            index: i as usize,
+                            index: index_value as usize,
                         })?
                         .clone()),
                     _ => todo!(),

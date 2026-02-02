@@ -165,7 +165,7 @@ impl Lexer {
             return Token::CharConst(
                 self.source_code
                     .chars()
-                    .nth(self.index)
+                    .nth(current_index)
                     .expect("there should be a char"),
             );
         }
