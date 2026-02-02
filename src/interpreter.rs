@@ -8,10 +8,11 @@ use itertools::Itertools;
 
 use crate::{
     error::Error,
-    parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree},
+    parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
-    symbols::{BuiltinInput, CallableBody, ParamMode, VarSymbol},
+    symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
     tokens::Token,
+    utils::NodePool,
 };
 
 #[derive(Debug, Clone)]
@@ -30,7 +31,20 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Char(char),
-    Array(Vec<Box<Value>>),
+    Array(Vec<Option<Box<Value>>>),
+}
+
+impl Value {
+    pub fn ordinal_rank(&self) -> Result<i64, Error> {
+        match self {
+            Value::Integer(i) => Ok(*i),
+            Value::Char(c) => Ok(*c as i64),
+            Value::Boolean(b) => Ok(*b as i64),
+            _ => Err(Error::InterpreterError {
+                msg: format!("ordinal rank is not supported for {:?}", self),
+            }),
+        }
+    }
 }
 
 impl ToString for Value {
@@ -41,7 +55,12 @@ impl ToString for Value {
             Value::Boolean(v) => format!("{v}"),
             Value::String(v) => v.to_owned(),
             Value::Char(c) => c.to_string(),
-            Value::Array(vals) => format!("[{}]", vals.iter().map(|v| v.to_string()).join(", ")),
+            Value::Array(vals) => format!(
+                "[{}]",
+                vals.iter()
+                    .map(|v| v.as_ref().map_or("None".to_string(), |v| v.to_string()))
+                    .join(", ")
+            ),
         }
     }
 }
@@ -57,6 +76,9 @@ impl Ref {
     }
     pub fn get(&self) -> Option<&Value> {
         self.value.as_ref()
+    }
+    pub fn get_mut(&mut self) -> Option<&mut Value> {
+        self.value.as_mut()
     }
     pub fn set(&mut self, value: Value) {
         self.value = Some(value);
@@ -116,8 +138,8 @@ impl ActivationRecord {
 pub trait BuiltinCtx {
     type Value;
 
-    fn read<'a>(&'a self, builtin_input: &'a BuiltinInput) -> Result<&'a Self::Value, Error>;
-    fn write(&mut self, builtin_input: &BuiltinInput, value: Value) -> Result<(), Error>;
+    fn read<'a>(&'a self, builtin_input: &'a LValue) -> Result<&'a Self::Value, Error>;
+    fn write(&mut self, builtin_input: &LValue, value: Value) -> Result<(), Error>;
 }
 
 pub struct CallStack {
@@ -174,21 +196,34 @@ impl CallStack {
 impl BuiltinCtx for CallStack {
     type Value = Value;
 
-    fn read<'a>(&'a self, builtin_input: &'a BuiltinInput) -> Result<&'a Self::Value, Error> {
+    fn read<'a>(&'a self, builtin_input: &'a LValue) -> Result<&'a Self::Value, Error> {
         match builtin_input {
-            BuiltinInput::Value(v) => Ok(v),
-            BuiltinInput::Ref { name } => self.lookup_value(name).ok_or(Error::InterpreterError {
+            LValue::Value(v) => Ok(v),
+            LValue::Ref { name } => self.lookup_value(name).ok_or(Error::InterpreterError {
                 msg: "name was not found".into(),
             }),
+            LValue::ArrIndex { name, index } => self
+                .lookup_value(name)
+                .ok_or(Error::InterpreterError {
+                    msg: "name was not found".into(),
+                })
+                .and_then(|v| match v {
+                    Value::Array(a) => a[*index].as_deref().ok_or(Error::InterpreterError {
+                        msg: "value is None".into(),
+                    }),
+                    _ => Err(Error::InterpreterError {
+                        msg: "value should be array".into(),
+                    }),
+                }),
         }
     }
 
-    fn write(&mut self, builtin_input: &BuiltinInput, value: Self::Value) -> Result<(), Error> {
+    fn write(&mut self, builtin_input: &LValue, value: Self::Value) -> Result<(), Error> {
         match builtin_input {
-            BuiltinInput::Value(_) => Err(Error::InterpreterError {
+            LValue::Value(_) => Err(Error::InterpreterError {
                 msg: "cannot write to a value".into(),
             }),
-            BuiltinInput::Ref { name } => {
+            LValue::Ref { name } => {
                 self.lookup_mut(name)
                     .ok_or(Error::InterpreterError {
                         msg: "name not found".into(),
@@ -196,25 +231,48 @@ impl BuiltinCtx for CallStack {
                     .set(value);
                 Ok(())
             }
+            LValue::ArrIndex { name, index } => self
+                .lookup_mut(name)
+                .ok_or(Error::InterpreterError {
+                    msg: "name not found".into(),
+                })?
+                .get_mut()
+                .ok_or(Error::InterpreterError {
+                    msg: "var is not defined".into(),
+                })
+                .map(|v| match v {
+                    Value::Array(a) => {
+                        a[*index] = Some(Box::new(value));
+                        Ok(())
+                    }
+                    _ => Err(Error::InterpreterError {
+                        msg: "var is not array".into(),
+                    }),
+                })?,
         }
     }
 }
 
-pub struct Interpreter {
+pub struct Interpreter<'a> {
     call_stack: CallStack,
+
+    range_symbols: NodePool<TypeSymbolRef, RangeSymbol<'a>>,
+    type_range_map: HashMap<TypeSymbolRef, TypeSymbolRef>,
 }
 
-impl Interpreter {
+impl<'a> Interpreter<'a> {
     pub fn new() -> Self {
         Self {
             call_stack: CallStack::new(),
+            range_symbols: NodePool::new(),
+            type_range_map: HashMap::new(),
         }
     }
 
     pub fn interperet(
         &mut self,
         tree: &Tree,
-        semantic_metadata: &SemanticMetadata,
+        semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push(ActivationRecord::new("gloabl", 0));
         tree.program
@@ -244,12 +302,32 @@ impl Interpreter {
                 Ok(ControlFlow::Continue(()))
             }
             Stmt::Assign { left, right } => {
-                let var_name = match tree.expr_pool.get(*left) {
-                    Expr::Var { name } => name,
+                let val = self.visit_expr(*right, tree, semantic_metadata)?;
+                match tree.expr_pool.get(*left) {
+                    Expr::Var { name } => self.call_stack.peek_mut().set_value(name, val),
+                    Expr::Index {
+                        base,
+                        index_value,
+                        other_indicies: _,
+                    } => {
+                        let index_value =
+                            match self.visit_expr(*index_value, tree, semantic_metadata)? {
+                                Value::Integer(i) => i as usize,
+                                _ => panic!(),
+                            };
+                        match tree.expr_pool.get(*base) {
+                            Expr::Var { name } => self.call_stack.write(
+                                &LValue::ArrIndex {
+                                    name: name,
+                                    index: index_value,
+                                },
+                                val,
+                            )?,
+                            _ => panic!(),
+                        };
+                    }
                     _ => panic!("unreachable"),
                 };
-                let val = self.visit_expr(*right, tree, semantic_metadata)?;
-                self.call_stack.peek_mut().set_value(var_name, val);
                 Ok(ControlFlow::Continue(()))
             }
             Stmt::NoOp => Ok(ControlFlow::Continue(())),
@@ -333,7 +411,7 @@ impl Interpreter {
                         .ok_or(Error::InterpreterError {
                             msg: format!("undefined var {}", name),
                         }),
-                    VarSymbol::Const { name: _, value } => Ok(value.clone().into()),
+                    VarSymbol::Const { value } => Ok(value.clone().into()),
                 }
             }
             Expr::UnaryOp { op, expr } => {
@@ -354,8 +432,28 @@ impl Interpreter {
             Expr::Index {
                 base,
                 index_value,
-                other_indicies,
-            } => todo!(),
+                other_indicies: _,
+            } => {
+                let var_name = match tree.expr_pool.get(*base) {
+                    Expr::Var { name } => name,
+                    _ => panic!("unreachable"),
+                };
+                let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
+                let arr_value = self
+                    .call_stack
+                    .lookup_value(var_name)
+                    .expect("should exist");
+                match (arr_value, index_value) {
+                    (Value::Array(_), Value::Integer(i)) => Ok(self
+                        .call_stack
+                        .read(&LValue::ArrIndex {
+                            name: var_name,
+                            index: i as usize,
+                        })?
+                        .clone()),
+                    _ => todo!(),
+                }
+            }
             Expr::Call { name, args } => {
                 match self.visit_callable(&expr, name, args, tree, semantic_metadata)? {
                     Some(v) => Ok(v),
@@ -371,12 +469,12 @@ impl Interpreter {
         &mut self,
         decl: &Decl,
         tree: &Tree,
-        semantic_metadata: &SemanticMetadata,
+        semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         match decl {
             Decl::VarDecl {
                 var,
-                type_node: _,
+                type_node,
                 default_value,
             } => {
                 let var_expr = tree.expr_pool.get(*var);
@@ -385,7 +483,31 @@ impl Interpreter {
                     _ => panic!("unreachable"),
                 };
                 self.call_stack.peek_mut().set(var_name);
-                if let Some(val) = default_value {
+                let type_symbol = semantic_metadata.types.get(
+                    *semantic_metadata
+                        .expr_type_map
+                        .get(var)
+                        .expect("should exist"),
+                );
+                if let TypeSymbol::Array {
+                    index_type: _,
+                    value_type: _,
+                } = type_symbol
+                {
+                    self.visit_type(*type_node, tree, semantic_metadata)?;
+                    let range_length = self
+                        .range_symbols
+                        .get(
+                            *self
+                                .type_range_map
+                                .get(semantic_metadata.type_type_map.get(type_node).unwrap())
+                                .unwrap(),
+                        )
+                        .len();
+                    self.call_stack
+                        .peek_mut()
+                        .set_value(var_name, Value::Array(vec![None; range_length]));
+                } else if let Some(val) = default_value {
                     let value = self.visit_expr(*val, tree, semantic_metadata)?;
                     self.call_stack.peek_mut().set_value(var_name, value);
                 };
@@ -459,23 +581,72 @@ impl Interpreter {
                 Ok(result)
             }
             CallableBody::Func(f) => {
-                let values: Vec<BuiltinInput> = symbol
+                let values: Vec<LValue> = symbol
                     .params
                     .iter()
                     .zip(args)
                     .map(|((_, m), a)| match m {
                         ParamMode::Var => self
                             .visit_expr(*a, tree, semantic_metadata)
-                            .map(|e| BuiltinInput::Value(e)),
+                            .map(|e| LValue::Value(e)),
                         ParamMode::Ref => match tree.expr_pool.get(*a) {
-                            Expr::Var { name } => Ok(BuiltinInput::Ref { name }),
+                            Expr::Var { name } => Ok(LValue::Ref { name }),
                             _ => panic!("unreachable"),
                         },
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
-                let value_refs: Vec<&BuiltinInput> = values.iter().collect();
+                let value_refs: Vec<&LValue> = values.iter().collect();
                 f(&mut self.call_stack, &value_refs)
             }
+        }
+    }
+
+    fn visit_type(
+        &mut self,
+        type_node: TypeRef,
+        tree: &Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
+        match tree.type_pool.get(type_node) {
+            Type::Range { start_val, end_val } => {
+                let type_symbol = semantic_metadata
+                    .get_type_type(&type_node)
+                    .expect("should exist");
+                let init_val = self.visit_expr(*start_val, tree, semantic_metadata)?;
+                let end_val = self.visit_expr(*end_val, tree, semantic_metadata)?;
+                self.type_range_map.insert(
+                    *semantic_metadata.type_type_map.get(&type_node).unwrap(),
+                    self.range_symbols
+                        .alloc(RangeSymbol::new(&type_symbol, &init_val, &end_val)?),
+                );
+                Ok(())
+            }
+            Type::Alias(_) => {
+                let type_ref = semantic_metadata.type_type_map.get(&type_node).unwrap();
+                let range_symbol_ref = self.type_range_map.get(type_ref);
+                if let Some(range_ref) = range_symbol_ref {
+                    self.type_range_map.insert(*type_ref, *range_ref);
+                }
+                Ok(())
+            }
+            Type::Array {
+                index_type,
+                element_type: _,
+            } => {
+                self.visit_type(*index_type, tree, semantic_metadata)?;
+                let type_ref = semantic_metadata.type_type_map.get(index_type).unwrap();
+                let range_symbol_ref = self.type_range_map.get(type_ref);
+                if let Some(range_ref) = range_symbol_ref {
+                    self.type_range_map.insert(
+                        *semantic_metadata.type_type_map.get(&type_node).unwrap(),
+                        *range_ref,
+                    );
+                } else {
+                    panic!()
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 }

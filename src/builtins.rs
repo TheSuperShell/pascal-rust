@@ -4,7 +4,7 @@ use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
     symbols::{
-        BuiltinInput, CallableBody, CallableSymbol, CallableSymbolRef, ParamMode, SymbolTable,
+        CallableBody, CallableSymbol, CallableSymbolRef, LValue, ParamMode, SymbolTable,
         TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     utils::NodePool,
@@ -12,15 +12,15 @@ use crate::{
 
 fn writeln(
     _: &mut dyn BuiltinCtx<Value = Value>,
-    args: &[&BuiltinInput],
+    args: &[&LValue],
 ) -> Result<Option<Value>, Error> {
     args.iter()
         .map(|v| match v {
-            BuiltinInput::Value(v) => {
+            LValue::Value(v) => {
                 println!("{}", v.to_string());
                 Ok(())
             }
-            BuiltinInput::Ref { name: _ } => Err(Error::InterpreterError {
+            _ => Err(Error::InterpreterError {
                 msg: "unexpected".into(),
             }),
         })
@@ -30,7 +30,7 @@ fn writeln(
 
 fn readln(
     ctx: &mut dyn BuiltinCtx<Value = Value>,
-    args: &[&BuiltinInput],
+    args: &[&LValue],
 ) -> Result<Option<Value>, Error> {
     args.iter()
         .map(|v| {

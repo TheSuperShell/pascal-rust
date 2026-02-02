@@ -25,6 +25,12 @@ pub struct SemanticMetadata {
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
 }
 
+impl SemanticMetadata {
+    pub fn get_type_type(&self, type_ref: &TypeRef) -> Option<&TypeSymbol> {
+        self.type_type_map.get(type_ref).map(|r| self.types.get(*r))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SemanticAnalyzer {
     semantic_metadata: SemanticMetadata,
@@ -75,9 +81,24 @@ impl SemanticAnalyzer {
     fn visit_stmt(&mut self, node: StmtRef, tree: &Tree) -> Result<(), Error> {
         match tree.stmt_pool.get(node) {
             Stmt::Assign { left, right } => {
+                let left_expr = tree.expr_pool.get(*left);
+                match left_expr {
+                    Expr::Var { name: _ } => (),
+                    Expr::Index {
+                        base: _,
+                        index_value: _,
+                        other_indicies: _,
+                    } => (),
+                    _ => {
+                        return Err(Error::SemanticError {
+                            msg: format!("cannot assign to {:?}", left_expr),
+                            error_code: None,
+                        });
+                    }
+                }
                 let left_type = self.visit_expr(*left, tree)?;
                 let right_type = self.visit_expr(*right, tree)?;
-                if !assinable(&left_type, &right_type) {
+                if !assinable(&self.semantic_metadata.types, &left_type, &right_type) {
                     return Err(Error::SemanticError {
                         msg: "value not assignable".to_string(),
                         error_code: None,
@@ -180,13 +201,17 @@ impl SemanticAnalyzer {
                 .clone();
                 let init_state_type = self.visit_expr(*init, tree)?;
                 let end_state_type = self.visit_expr(*end, tree)?;
-                if init_state_type != end_state_type {
+                if !TypeSymbol::eq(
+                    &self.semantic_metadata.types,
+                    &init_state_type,
+                    &end_state_type,
+                ) {
                     return Err(Error::SemanticError {
                         msg: "init and end of for should have the same type".to_string(),
                         error_code: None,
                     });
                 }
-                if var_type != init_state_type {
+                if !TypeSymbol::eq(&self.semantic_metadata.types, &var_type, &init_state_type) {
                     return Err(Error::SemanticError {
                         msg: "variable type should be the same as limit types".to_string(),
                         error_code: None,
@@ -223,7 +248,7 @@ impl SemanticAnalyzer {
                         name: _,
                         type_symbol,
                     } => self.semantic_metadata.types.get(*type_symbol).clone(),
-                    VarSymbol::Const { name: _, value } => match value {
+                    VarSymbol::Const { value } => match value {
                         ConstValue::Integer(_) => TypeSymbol::Integer,
                         ConstValue::Boolean(_) => TypeSymbol::Boolean,
                         ConstValue::Char(_) => TypeSymbol::Char,
@@ -343,7 +368,11 @@ impl SemanticAnalyzer {
                         value_type,
                     } => {
                         let index_type = self.semantic_metadata.types.get(index_type_ref);
-                        if *index_type != actual_index_type {
+                        if !TypeSymbol::eq(
+                            &self.semantic_metadata.types,
+                            index_type,
+                            &actual_index_type,
+                        ) {
                             return Err(Error::SemanticError {
                                 msg: "index type is incorrect".to_string(),
                                 error_code: None,
@@ -415,15 +444,25 @@ impl SemanticAnalyzer {
                 let start_val_type = self.visit_expr(*start_val, tree)?;
                 let end_val_type = self.visit_expr(*end_val, tree)?;
 
-                if start_val_type != end_val_type {
+                if !TypeSymbol::eq(
+                    &self.semantic_metadata.types,
+                    &start_val_type,
+                    &end_val_type,
+                ) {
                     return Err(Error::SemanticError {
                         msg: "range limits should be of the same type".to_string(),
                         error_code: None,
                     });
                 }
+                if !start_val_type.is_ordinal() {
+                    return Err(Error::SemanticError {
+                        msg: format!("range limits should be opdinal, got {:?}", start_val_type),
+                        error_code: None,
+                    });
+                }
 
-                // let start_val_type_ref = self.semantic_metadata.types.alloc(start_val_type);
-                Ok(start_val_type)
+                let start_val_type_ref = self.semantic_metadata.types.alloc(start_val_type);
+                Ok(TypeSymbol::Range(start_val_type_ref))
             }
         }?;
         let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol.clone());
@@ -460,13 +499,10 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                let const_symbol =
-                    self.semantic_metadata
-                        .vars
-                        .alloc(crate::symbols::VarSymbol::Const {
-                            name: var_name.clone(),
-                            value: const_type,
-                        });
+                let const_symbol = self
+                    .semantic_metadata
+                    .vars
+                    .alloc(crate::symbols::VarSymbol::Const { value: const_type });
                 self.current_scope.define_var(var_name, const_symbol);
                 Ok(())
             }
@@ -605,7 +641,7 @@ impl SemanticAnalyzer {
 
                 if let Some(expr) = default_value {
                     let default_type = self.visit_expr(*expr, tree)?;
-                    if default_type != type_symbol {
+                    if !TypeSymbol::eq(&self.semantic_metadata.types, &default_type, &type_symbol) {
                         return Err(Error::SemanticError {
                             msg: "default value should have the correct type".to_string(),
                             error_code: None,
@@ -659,7 +695,7 @@ impl SemanticAnalyzer {
                         } => self.semantic_metadata.types.get(*type_symbol),
                         _ => panic!("unreachable"),
                     };
-                    if !assinable(&param_type, &expr_type) {
+                    if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
                         return Err(Error::SemanticError {
                             msg: "incorrect type".to_string(),
                             error_code: None,
@@ -802,11 +838,15 @@ fn analyze_function(
     }
 }
 
-fn assinable(left: &TypeSymbol, right: &TypeSymbol) -> bool {
+fn assinable(
+    types: &NodePool<TypeSymbolRef, TypeSymbol>,
+    left: &TypeSymbol,
+    right: &TypeSymbol,
+) -> bool {
     if let TypeSymbol::Any = left {
         return true;
     }
-    if left == right {
+    if TypeSymbol::eq(types, left, right) {
         return true;
     }
     match (left, right) {

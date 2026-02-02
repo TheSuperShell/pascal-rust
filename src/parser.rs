@@ -659,9 +659,12 @@ impl Parser {
     }
 
     /// assignment_statement:
-    /// id Assign expr
+    /// id (LBracket expr RBracket)? Assign expr
     fn assignment_statement(&mut self) -> Result<StmtRef, Error> {
-        let var = self.id()?;
+        let var = match self.lexer.current_char() {
+            Some('[') => self.index_of_statement()?,
+            _ => self.id()?,
+        };
         self.eat(Token::Assign)?;
         let expr = self.expr()?;
         Ok(self.stmt_pool.alloc(Stmt::Assign {
@@ -834,7 +837,7 @@ impl Parser {
     }
 
     /// index_of_statement:
-    /// If LBracket expr (Comma expr)* RBracket
+    /// id LBracket expr (Comma expr)* RBracket
     fn index_of_statement(&mut self) -> Result<ExprRef, Error> {
         let var_node = self.id()?;
         self.eat(Token::LBracket)?;

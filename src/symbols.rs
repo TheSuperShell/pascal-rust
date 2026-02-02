@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::{
     error::Error,
-    interpreter::{BuiltinCtx, CallStack, Value},
+    interpreter::{BuiltinCtx, Value},
     parser::StmtRef,
-    utils::define_ref,
+    utils::{NodePool, define_ref},
 };
 
 define_ref!(TypeSymbolRef);
@@ -18,7 +18,7 @@ pub enum TypeSymbol {
     Boolean,
     String,
     Char,
-    // Range(TypeSymbolRef),
+    Range(TypeSymbolRef),
     Array {
         index_type: TypeSymbolRef,
         value_type: TypeSymbolRef,
@@ -26,6 +26,34 @@ pub enum TypeSymbol {
     DynamicArray(TypeSymbolRef),
     Enum(Vec<String>),
     Any,
+}
+
+impl TypeSymbol {
+    pub fn is_ordinal(&self) -> bool {
+        matches!(self, Self::Integer | Self::Char | Self::Boolean)
+    }
+    pub fn oridnal_value(&self, index: i64) -> Result<Value, Error> {
+        match self {
+            TypeSymbol::Integer => Ok(Value::Integer(index)),
+            TypeSymbol::Char => Ok(Value::Char(char::from_u32(index as u32).unwrap())),
+            TypeSymbol::Boolean => Ok(Value::Boolean(index != 0)),
+            _ => Err(Error::InterpreterError {
+                msg: format!("ordinal value is not supported for {:?}", self),
+            }),
+        }
+    }
+
+    pub fn eq(
+        node_pool: &NodePool<TypeSymbolRef, TypeSymbol>,
+        left: &TypeSymbol,
+        right: &TypeSymbol,
+    ) -> bool {
+        match (left, right) {
+            (TypeSymbol::Range(t), _) => TypeSymbol::eq(node_pool, node_pool.get(*t), right),
+            (_, TypeSymbol::Range(t)) => TypeSymbol::eq(node_pool, left, node_pool.get(*t)),
+            (_, _) => left == right,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,14 +84,42 @@ pub enum VarSymbol {
         type_symbol: TypeSymbolRef,
     },
     Const {
-        name: String,
         value: ConstValue,
     },
 }
 
 #[derive(Debug, Clone)]
-pub enum BuiltinInput<'a> {
+pub struct RangeSymbol<'a> {
+    base_type: &'a TypeSymbol,
+    lower_index: i64,
+    higher_index: i64,
+}
+
+impl<'a> RangeSymbol<'a> {
+    pub fn new(
+        base_type: &'a TypeSymbol,
+        lower_value: &Value,
+        upper_value: &Value,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            base_type,
+            lower_index: lower_value.ordinal_rank()?,
+            higher_index: upper_value.ordinal_rank()?,
+        })
+    }
+
+    pub fn base_type(&self) -> &'a TypeSymbol {
+        self.base_type
+    }
+    pub fn len(&self) -> usize {
+        (self.higher_index - self.lower_index).try_into().unwrap()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LValue<'a> {
     Ref { name: &'a str },
+    ArrIndex { name: &'a str, index: usize },
     Value(Value),
 }
 
@@ -73,7 +129,7 @@ pub enum CallableBody {
     Func(
         fn(
             ctx: &mut dyn BuiltinCtx<Value = Value>,
-            args: &[&BuiltinInput],
+            args: &[&LValue],
         ) -> Result<Option<Value>, Error>,
     ),
 }
