@@ -10,25 +10,17 @@ program factorial;
     function some_func(a, b: integer; c: real): string;
     begin
         c := a + b;
+        result := 'hello'
     end;
     var c: string;
-    a, b: boolean;
-    i: integer;
+    a, b: boolean = true;
 begin
     a := (5 > 10) = true and b;
+    writeln(a);
+    writeln(pi);
     b := a;
     c := some_func(1, 2, 3);
-    for i := 0 to 35 do
-        b := a;
-    if 10 > 34.5 then
-        a := b
-    else if 10 < 353 then
-        b := true
-    else
-        b := a;
-    while a <> b do
-        begin
-            a := true;
-            b := false;
-        end;
+    writeln(c);
+    readln(c);
+    writeln(c);
 end.

@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt::{Debug, Display},
+    ops::ControlFlow,
 };
 
 use itertools::Itertools;
@@ -9,7 +10,18 @@ use crate::{
     error::Error,
     parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree},
     semantic_analyzer::SemanticMetadata,
+    symbols::{BuiltinInput, CallableBody, ParamMode, VarSymbol},
+    tokens::Token,
 };
+
+#[derive(Debug, Clone)]
+pub enum Signal {
+    Break,
+    Continue,
+    Exit(Option<Value>),
+}
+
+pub type Exec<T> = Result<ControlFlow<Signal, T>, Error>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -78,6 +90,9 @@ impl ActivationRecord {
     pub fn get(&self, name: &str) -> Option<&Ref> {
         self.members.get(name)
     }
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Ref> {
+        self.members.get_mut(name)
+    }
     pub fn get_value(&self, name: &str) -> Option<&Value> {
         self.members.get(name).and_then(|f| f.get())
     }
@@ -85,17 +100,24 @@ impl ActivationRecord {
         self.members.insert(name.to_string(), Ref::new());
     }
     pub fn set_value(&mut self, name: &str, value: Value) {
-        if !self.members.contains_key(name) {
-            self.set(name);
-        };
         self.members
             .get_mut(name)
-            .expect("should never fail")
+            .expect(&format!(
+                "unkown variable {}, semantic analyzer should've handeled this",
+                name
+            ))
             .set(value);
     }
     pub fn contains(&self, name: &str) -> bool {
         self.members.contains_key(name)
     }
+}
+
+pub trait BuiltinCtx {
+    type Value;
+
+    fn read<'a>(&'a self, builtin_input: &'a BuiltinInput) -> Result<&'a Self::Value, Error>;
+    fn write(&mut self, builtin_input: &BuiltinInput, value: Value) -> Result<(), Error>;
 }
 
 pub struct CallStack {
@@ -107,6 +129,9 @@ impl CallStack {
         Self {
             records: Vec::new(),
         }
+    }
+    pub fn current_nesting(&self) -> usize {
+        self.records.len()
     }
     pub fn pop(&mut self) -> Option<ActivationRecord> {
         self.records.pop()
@@ -128,6 +153,14 @@ impl CallStack {
         }
         None
     }
+    pub fn lookup_mut(&mut self, key: &str) -> Option<&mut Ref> {
+        for ar in self.records.iter_mut().rev() {
+            if ar.contains(key) {
+                return ar.get_mut(key);
+            }
+        }
+        None
+    }
     pub fn lookup_value(&self, key: &str) -> Option<&Value> {
         for ar in self.records.iter().rev() {
             if ar.contains(key) {
@@ -135,6 +168,35 @@ impl CallStack {
             }
         }
         None
+    }
+}
+
+impl BuiltinCtx for CallStack {
+    type Value = Value;
+
+    fn read<'a>(&'a self, builtin_input: &'a BuiltinInput) -> Result<&'a Self::Value, Error> {
+        match builtin_input {
+            BuiltinInput::Value(v) => Ok(v),
+            BuiltinInput::Ref { name } => self.lookup_value(name).ok_or(Error::InterpreterError {
+                msg: "name was not found".into(),
+            }),
+        }
+    }
+
+    fn write(&mut self, builtin_input: &BuiltinInput, value: Self::Value) -> Result<(), Error> {
+        match builtin_input {
+            BuiltinInput::Value(_) => Err(Error::InterpreterError {
+                msg: "cannot write to a value".into(),
+            }),
+            BuiltinInput::Ref { name } => {
+                self.lookup_mut(name)
+                    .ok_or(Error::InterpreterError {
+                        msg: "name not found".into(),
+                    })?
+                    .set(value);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -154,13 +216,14 @@ impl Interpreter {
         tree: &Tree,
         semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
+        self.call_stack.push(ActivationRecord::new("gloabl", 0));
         tree.program
             .block
             .declarations
             .iter()
             .map(|d| self.visit_declaration(d, tree, semantic_metadata))
             .collect::<Result<(), Error>>()?;
-        self.visit_stmt(tree.program.block.statements, tree, semantic_metadata)?;
+        let _ = self.visit_stmt(tree.program.block.statements, tree, semantic_metadata)?;
         Ok(())
     }
 
@@ -169,15 +232,75 @@ impl Interpreter {
         stmt: StmtRef,
         tree: &Tree,
         semantic_metadata: &SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Exec<()> {
         match tree.stmt_pool.get(stmt) {
-            Stmt::Compound(stmts) => Ok(stmts
-                .iter()
-                .map(|stmt| self.visit_stmt(*stmt, tree, semantic_metadata))
-                .collect::<Result<(), Error>>()?),
-            _ => Err(Error::InterpreterError {
-                msg: "not implemented".to_string(),
-            }),
+            Stmt::Compound(stmts) => {
+                for s in stmts {
+                    match self.visit_stmt(*s, tree, semantic_metadata)? {
+                        ControlFlow::Continue(()) => {}
+                        ControlFlow::Break(sig) => return Ok(ControlFlow::Break(sig)),
+                    }
+                }
+                Ok(ControlFlow::Continue(()))
+            }
+            Stmt::Assign { left, right } => {
+                let var_name = match tree.expr_pool.get(*left) {
+                    Expr::Var { name } => name,
+                    _ => panic!("unreachable"),
+                };
+                let val = self.visit_expr(*right, tree, semantic_metadata)?;
+                self.call_stack.peek_mut().set_value(var_name, val);
+                Ok(ControlFlow::Continue(()))
+            }
+            Stmt::NoOp => Ok(ControlFlow::Continue(())),
+            Stmt::While { cond, body } => {
+                loop {
+                    let c = match self.visit_expr(*cond, tree, semantic_metadata)? {
+                        Value::Boolean(b) => b,
+                        _ => panic!("unreachable"),
+                    };
+                    if !c {
+                        break;
+                    }
+                    match self.visit_stmt(*body, tree, semantic_metadata)? {
+                        ControlFlow::Continue(()) => {}
+                        ControlFlow::Break(Signal::Continue) => continue,
+                        ControlFlow::Break(Signal::Break) => break,
+                        ControlFlow::Break(sig @ Signal::Exit(_)) => {
+                            return Ok(ControlFlow::Break(sig));
+                        }
+                    }
+                }
+                Ok(ControlFlow::Continue(()))
+            }
+            Stmt::Continue => Ok(ControlFlow::Break(Signal::Continue)),
+            Stmt::Break => Ok(ControlFlow::Break(Signal::Break)),
+            Stmt::Exit(e) => {
+                let v = if let Some(e) = e {
+                    Some(self.visit_expr(*e, tree, semantic_metadata)?)
+                } else {
+                    None
+                };
+                Ok(ControlFlow::Break(Signal::Exit(v)))
+            }
+            Stmt::Call { call } => match tree.expr_pool.get(*call) {
+                Expr::Call { name, args } => {
+                    self.visit_callable(call, name, args, tree, semantic_metadata)?;
+                    Ok(ControlFlow::Continue(()))
+                }
+                _ => panic!("unreachable"),
+            },
+            Stmt::If {
+                cond,
+                elifs,
+                else_statement,
+            } => todo!(),
+            Stmt::For {
+                var,
+                init,
+                end,
+                body,
+            } => todo!(),
         }
     }
 
@@ -193,20 +316,54 @@ impl Interpreter {
             Expr::LiteralInteger(i) => Ok(Value::Integer(*i)),
             Expr::LiteralReal(r) => Ok(Value::Real(*r)),
             Expr::LiteralString(s) => Ok(Value::String(s.to_owned())),
-            Expr::Var { name } => self
-                .call_stack
-                .peek()
-                .get_value(name)
-                .map(|v| v.clone())
-                .ok_or(Error::InterpreterError {
-                    msg: "undefined var".to_string(),
-                }),
-            Expr::UnaryOp { op, expr } => {
-                todo!()
+            Expr::Var { name: _ } => {
+                let var_symbol_ref = semantic_metadata
+                    .var_symbols
+                    .get(&expr)
+                    .expect("should have var symbol ref");
+                match semantic_metadata.vars.get(*var_symbol_ref) {
+                    VarSymbol::Var {
+                        name,
+                        type_symbol: _,
+                    } => self
+                        .call_stack
+                        .peek()
+                        .get_value(name)
+                        .map(|v| v.clone())
+                        .ok_or(Error::InterpreterError {
+                            msg: format!("undefined var {}", name),
+                        }),
+                    VarSymbol::Const { name: _, value } => Ok(value.clone().into()),
+                }
             }
-            _ => Err(Error::InterpreterError {
-                msg: "not implemented".to_string(),
-            }),
+            Expr::UnaryOp { op, expr } => {
+                match (op, self.visit_expr(*expr, tree, semantic_metadata)?) {
+                    (Token::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
+                    (Token::Minus, Value::Integer(v)) => Ok(Value::Integer(-v)),
+                    (Token::Minus, Value::Real(v)) => Ok(Value::Real(-v)),
+                    (Token::Plus, Value::Integer(v)) => Ok(Value::Integer(v)),
+                    (Token::Plus, Value::Real(v)) => Ok(Value::Real(v)),
+                    _ => panic!("unreachable"),
+                }
+            }
+            Expr::BinOp { op, left, right } => {
+                let v_l = self.visit_expr(*left, tree, semantic_metadata)?;
+                let v_r = self.visit_expr(*right, tree, semantic_metadata)?;
+                Ok(bin_op(op, v_l, v_r))
+            }
+            Expr::Index {
+                base,
+                index_value,
+                other_indicies,
+            } => todo!(),
+            Expr::Call { name, args } => {
+                match self.visit_callable(&expr, name, args, tree, semantic_metadata)? {
+                    Some(v) => Ok(v),
+                    None => Err(Error::InterpreterError {
+                        msg: "function returned none".to_string(),
+                    }),
+                }
+            }
         }
     }
 
@@ -246,5 +403,160 @@ impl Interpreter {
                 type_node: _,
             } => Ok(()),
         }
+    }
+    fn visit_callable(
+        &mut self,
+        node: &ExprRef,
+        name: &str,
+        args: &Vec<ExprRef>,
+        tree: &Tree,
+        semantic_metadata: &SemanticMetadata,
+    ) -> Result<Option<Value>, Error> {
+        let symbol = semantic_metadata
+            .callable_symbols
+            .get(node)
+            .expect("call should exist");
+        match symbol.body {
+            CallableBody::BlockAST(node) => {
+                let mut ar = ActivationRecord::new(name, self.call_stack.current_nesting() + 1);
+                for ((inp, mode), arg) in symbol.params.iter().zip(args) {
+                    match mode {
+                        ParamMode::Var => {
+                            let var_symbol = semantic_metadata.vars.get(*inp);
+                            let var_name = match var_symbol {
+                                VarSymbol::Var {
+                                    name,
+                                    type_symbol: _,
+                                } => name,
+                                _ => panic!("unreachable"),
+                            };
+                            let value = self.visit_expr(*arg, tree, semantic_metadata)?;
+                            ar.set(var_name);
+                            ar.set_value(var_name, value);
+                        }
+                        ParamMode::Ref => {}
+                    }
+                }
+                if let Some(_) = symbol.return_type {
+                    ar.set("result");
+                    ar.set(&symbol.name);
+                }
+                self.call_stack.push(ar);
+                let cf = self.visit_stmt(node, tree, semantic_metadata)?;
+                let result = match symbol.return_type {
+                    Some(_) => {
+                        if let ControlFlow::Break(Signal::Exit(Some(val))) = cf {
+                            Some(val.clone())
+                        } else if let Some(val) = self.call_stack.peek().get_value("result") {
+                            Some(val.clone())
+                        } else {
+                            self.call_stack.peek().get_value(&symbol.name).cloned()
+                        }
+                    }
+                    None => None,
+                };
+                self.call_stack.pop();
+                Ok(result)
+            }
+            CallableBody::Func(f) => {
+                let values: Vec<BuiltinInput> = symbol
+                    .params
+                    .iter()
+                    .zip(args)
+                    .map(|((_, m), a)| match m {
+                        ParamMode::Var => self
+                            .visit_expr(*a, tree, semantic_metadata)
+                            .map(|e| BuiltinInput::Value(e)),
+                        ParamMode::Ref => match tree.expr_pool.get(*a) {
+                            Expr::Var { name } => Ok(BuiltinInput::Ref { name }),
+                            _ => panic!("unreachable"),
+                        },
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let value_refs: Vec<&BuiltinInput> = values.iter().collect();
+                f(&mut self.call_stack, &value_refs)
+            }
+        }
+    }
+}
+
+fn bin_op(op: &Token, v_l: Value, v_r: Value) -> Value {
+    match op {
+        Token::Plus => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l + v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 + v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l + v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
+            (Value::String(v_l), Value::String(v_r)) => Value::String(v_l + &v_r),
+            (Value::String(v_l), Value::Char(v_r)) => Value::String(v_l + &v_r.to_string()),
+            _ => panic!("unreachable"),
+        },
+        Token::Minus => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l - v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 - v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l - v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::Mul => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l * v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 * v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l * v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l * v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::RealDiv => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Real(v_l as f64 / v_r as f64),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 / v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l / v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l / v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::IntegerDiv => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l / v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => {
+                Value::Integer((v_l / v_r as f64).floor() as i64)
+            }
+            _ => panic!("Unreachable"),
+        },
+        Token::Equal => Value::Boolean(v_l == v_r),
+        Token::NotEqual => Value::Boolean(v_l != v_r),
+        Token::And => match (v_l, v_r) {
+            (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l && v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::Or => match (v_l, v_r) {
+            (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l || v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::GreaterThen => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean(v_l as f64 > v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l > v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::LessThen => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) < v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l < v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::GreaterEqual => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) >= v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l >= v_r),
+            _ => panic!("unreachable"),
+        },
+        Token::LessEqual => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r),
+            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) <= v_r),
+            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r as f64),
+            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l <= v_r),
+            _ => panic!("unreachable"),
+        },
+        _ => panic!("unreachable"),
     }
 }

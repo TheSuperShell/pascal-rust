@@ -6,8 +6,8 @@ use crate::{
     error::Error,
     parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
-        CallableBody, CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable,
-        TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
+        CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
+        TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     tokens::Token,
     utils::NodePool,
@@ -21,7 +21,8 @@ pub struct SemanticMetadata {
 
     pub expr_type_map: HashMap<ExprRef, TypeSymbolRef>,
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
-    pub callable_bodies: HashMap<ExprRef, CallableBody>,
+    pub callable_symbols: HashMap<ExprRef, CallableSymbol>,
+    pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,16 +34,22 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
+        let mut callables = NodePool::new();
+        let mut vars = NodePool::new();
+        let mut types = NodePool::new();
+        let current_scope = SymbolTable::with_builtins(&mut types, &mut vars, &mut callables);
+        let current_scope = SymbolTable::new(1, "global", Some(Box::new(current_scope)));
         Self {
             semantic_metadata: SemanticMetadata {
-                types: NodePool::new(),
-                vars: NodePool::new(),
-                callables: NodePool::new(),
+                types,
+                vars,
+                callables,
                 type_type_map: HashMap::new(),
                 expr_type_map: HashMap::new(),
-                callable_bodies: HashMap::new(),
+                callable_symbols: HashMap::new(),
+                var_symbols: HashMap::new(),
             },
-            current_scope: SymbolTable::new(0, "global", None),
+            current_scope,
             loop_depth: 0,
         }
     }
@@ -208,6 +215,9 @@ impl SemanticAnalyzer {
                             error_code: None,
                         })?;
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
+                self.semantic_metadata
+                    .var_symbols
+                    .insert(node, var_symbol_ref);
                 let type_symbol = match var_symbol {
                     VarSymbol::Var {
                         name: _,
@@ -674,8 +684,8 @@ impl SemanticAnalyzer {
             .return_type
             .map(|r| self.semantic_metadata.types.get(r).clone());
         self.semantic_metadata
-            .callable_bodies
-            .insert(*node, callable_symbol.body);
+            .callable_symbols
+            .insert(*node, callable_symbol);
         Ok(return_type)
     }
     fn visit_condition(&mut self, cond: &Condition, tree: &Tree) -> Result<(), Error> {
@@ -793,6 +803,9 @@ fn analyze_function(
 }
 
 fn assinable(left: &TypeSymbol, right: &TypeSymbol) -> bool {
+    if let TypeSymbol::Any = left {
+        return true;
+    }
     if left == right {
         return true;
     }

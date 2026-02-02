@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{parser::StmtRef, utils::define_ref};
+use crate::{
+    error::Error,
+    interpreter::{BuiltinCtx, CallStack, Value},
+    parser::StmtRef,
+    utils::define_ref,
+};
 
 define_ref!(TypeSymbolRef);
 define_ref!(VarSymbolRef);
@@ -20,6 +25,7 @@ pub enum TypeSymbol {
     },
     DynamicArray(TypeSymbolRef),
     Enum(Vec<String>),
+    Any,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +36,19 @@ pub enum ConstValue {
     Char(char),
     Boolean(bool),
 }
+
+impl Into<Value> for ConstValue {
+    fn into(self) -> Value {
+        match self {
+            ConstValue::Integer(i) => Value::Integer(i),
+            ConstValue::Boolean(b) => Value::Boolean(b),
+            ConstValue::Char(c) => Value::Char(c),
+            ConstValue::String(s) => Value::String(s),
+            ConstValue::Real(r) => Value::Real(r),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum VarSymbol {
     Var {
@@ -43,9 +62,20 @@ pub enum VarSymbol {
 }
 
 #[derive(Debug, Clone)]
+pub enum BuiltinInput<'a> {
+    Ref { name: &'a str },
+    Value(Value),
+}
+
+#[derive(Debug, Clone)]
 pub enum CallableBody {
     BlockAST(StmtRef),
-    Func(fn()),
+    Func(
+        fn(
+            ctx: &mut dyn BuiltinCtx<Value = Value>,
+            args: &[&BuiltinInput],
+        ) -> Result<Option<Value>, Error>,
+    ),
 }
 
 #[derive(Debug, Clone)]
