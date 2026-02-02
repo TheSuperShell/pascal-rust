@@ -89,28 +89,19 @@ pub enum VarSymbol {
 }
 
 #[derive(Debug, Clone)]
-pub struct RangeSymbol<'a> {
-    base_type: &'a TypeSymbol,
+pub struct RangeSymbol {
     lower_index: i64,
     higher_index: i64,
 }
 
-impl<'a> RangeSymbol<'a> {
-    pub fn new(
-        base_type: &'a TypeSymbol,
-        lower_value: &Value,
-        upper_value: &Value,
-    ) -> Result<Self, Error> {
+impl RangeSymbol {
+    pub fn new(lower_value: &Value, upper_value: &Value) -> Result<Self, Error> {
         Ok(Self {
-            base_type,
             lower_index: lower_value.ordinal_rank()?,
             higher_index: upper_value.ordinal_rank()?,
         })
     }
 
-    pub fn base_type(&self) -> &'a TypeSymbol {
-        self.base_type
-    }
     pub fn len(&self) -> usize {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }

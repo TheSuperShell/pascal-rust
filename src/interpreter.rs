@@ -109,9 +109,6 @@ impl ActivationRecord {
             members: HashMap::new(),
         }
     }
-    pub fn get(&self, name: &str) -> Option<&Ref> {
-        self.members.get(name)
-    }
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Ref> {
         self.members.get_mut(name)
     }
@@ -166,14 +163,6 @@ impl CallStack {
     }
     pub fn peek_mut(&mut self) -> &mut ActivationRecord {
         self.records.last_mut().unwrap()
-    }
-    pub fn lookup(&self, key: &str) -> Option<&Ref> {
-        for ar in self.records.iter().rev() {
-            if ar.contains(key) {
-                return ar.get(key);
-            }
-        }
-        None
     }
     pub fn lookup_mut(&mut self, key: &str) -> Option<&mut Ref> {
         for ar in self.records.iter_mut().rev() {
@@ -253,14 +242,14 @@ impl BuiltinCtx for CallStack {
     }
 }
 
-pub struct Interpreter<'a> {
+pub struct Interpreter {
     call_stack: CallStack,
 
-    range_symbols: NodePool<TypeSymbolRef, RangeSymbol<'a>>,
+    range_symbols: NodePool<TypeSymbolRef, RangeSymbol>,
     type_range_map: HashMap<TypeSymbolRef, TypeSymbolRef>,
 }
 
-impl<'a> Interpreter<'a> {
+impl Interpreter {
     pub fn new() -> Self {
         Self {
             call_stack: CallStack::new(),
@@ -272,7 +261,7 @@ impl<'a> Interpreter<'a> {
     pub fn interperet(
         &mut self,
         tree: &Tree,
-        semantic_metadata: &'a SemanticMetadata,
+        semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push(ActivationRecord::new("gloabl", 0));
         tree.program
@@ -378,7 +367,29 @@ impl<'a> Interpreter<'a> {
                 init,
                 end,
                 body,
-            } => todo!(),
+            } => {
+                let init_val = self.visit_expr(*init, tree, semantic_metadata)?;
+                let end_val = self.visit_expr(*end, tree, semantic_metadata)?;
+                let type_symbol = semantic_metadata.get_expr_type(init).unwrap();
+                self.call_stack
+                    .write(&LValue::Ref { name: var }, init_val.clone())?;
+                let mut i = init_val.ordinal_rank()?;
+                while i != end_val.ordinal_rank()? {
+                    let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
+                    match cr {
+                        ControlFlow::Continue(()) => {}
+                        ControlFlow::Break(Signal::Continue) => {}
+                        ControlFlow::Break(Signal::Break) => break,
+                        ControlFlow::Break(sig @ Signal::Exit(_)) => {
+                            return Ok(ControlFlow::Break(sig));
+                        }
+                    }
+                    i += 1;
+                    self.call_stack
+                        .write(&LValue::Ref { name: var }, type_symbol.oridnal_value(i)?)?;
+                }
+                Ok(ControlFlow::Continue(()))
+            }
         }
     }
 
@@ -469,7 +480,7 @@ impl<'a> Interpreter<'a> {
         &mut self,
         decl: &Decl,
         tree: &Tree,
-        semantic_metadata: &'a SemanticMetadata,
+        semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         match decl {
             Decl::VarDecl {
@@ -605,19 +616,19 @@ impl<'a> Interpreter<'a> {
         &mut self,
         type_node: TypeRef,
         tree: &Tree,
-        semantic_metadata: &'a SemanticMetadata,
+        semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         match tree.type_pool.get(type_node) {
             Type::Range { start_val, end_val } => {
-                let type_symbol = semantic_metadata
-                    .get_type_type(&type_node)
-                    .expect("should exist");
+                // let type_symbol = semantic_metadata
+                //     .get_type_type(&type_node)
+                //     .expect("should exist");
                 let init_val = self.visit_expr(*start_val, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end_val, tree, semantic_metadata)?;
                 self.type_range_map.insert(
                     *semantic_metadata.type_type_map.get(&type_node).unwrap(),
                     self.range_symbols
-                        .alloc(RangeSymbol::new(&type_symbol, &init_val, &end_val)?),
+                        .alloc(RangeSymbol::new(&init_val, &end_val)?),
                 );
                 Ok(())
             }

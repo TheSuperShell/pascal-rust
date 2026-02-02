@@ -26,8 +26,11 @@ pub struct SemanticMetadata {
 }
 
 impl SemanticMetadata {
-    pub fn get_type_type(&self, type_ref: &TypeRef) -> Option<&TypeSymbol> {
-        self.type_type_map.get(type_ref).map(|r| self.types.get(*r))
+    // pub fn get_type_type(&self, type_ref: &TypeRef) -> Option<&TypeSymbol> {
+    //     self.type_type_map.get(type_ref).map(|r| self.types.get(*r))
+    // }
+    pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
+        self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
     }
 }
 

@@ -15,11 +15,13 @@ program factorial;
     var c: string;
     var arr: array[0..100] of integer;
     a, b: boolean = true;
+    i: integer;
 begin
     my_age := 1000;
     writeln(my_age);
-    arr[1] := 10;
-    writeln(arr[1]);
+    for i := 0 to 100 do
+        arr[i] := i * i;
+    writeln(arr);
     a := (5 > 10) = true and b;
     writeln(a);
     writeln(pi);
