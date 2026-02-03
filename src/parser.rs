@@ -43,6 +43,14 @@ pub enum Expr {
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    Program {
+        name: Token,
+        block: StmtRef,
+    },
+    Block {
+        declarations: Vec<Decl>,
+        statements: StmtRef,
+    },
     Break,
     Continue,
     Assign {
@@ -79,18 +87,6 @@ pub struct Condition {
 }
 
 #[derive(Debug, Clone)]
-pub struct Program {
-    pub name: Token,
-    pub block: Block,
-}
-
-#[derive(Debug, Clone)]
-pub struct Block {
-    pub declarations: Vec<Decl>,
-    pub statements: StmtRef,
-}
-
-#[derive(Debug, Clone)]
 pub enum Decl {
     VarDecl {
         var: ExprRef,
@@ -107,7 +103,7 @@ pub enum Decl {
     },
     Callable {
         name: Token,
-        block: Block,
+        block: StmtRef,
         params: Vec<Param>,
         return_type: Option<TypeRef>,
     },
@@ -181,16 +177,16 @@ impl<'a> Parser<'a> {
 
     /// program:
     /// Program Id Semi block Dot
-    fn program(&mut self) -> Result<Program, Error> {
+    fn program(&mut self) -> Result<StmtRef, Error> {
         self.eat(TokenType::Program)?;
         let var = self.id_str()?;
         self.eat(TokenType::Semi)?;
         let block = self.block()?;
         self.eat(TokenType::Dot)?;
-        Ok(Program {
+        Ok(self.stmt_pool.alloc(Stmt::Program {
             name: var,
             block: block,
-        })
+        }))
     }
 
     /// id:
@@ -221,13 +217,13 @@ impl<'a> Parser<'a> {
 
     /// block:
     /// declarations compound_statement
-    fn block(&mut self) -> Result<Block, Error> {
+    fn block(&mut self) -> Result<StmtRef, Error> {
         let nodes = self.declarations()?;
         let compound = self.compound_statement()?;
-        Ok(Block {
+        Ok(self.stmt_pool.alloc(Stmt::Block {
             declarations: nodes,
             statements: compound,
-        })
+        }))
     }
 
     /// declarations:
@@ -902,7 +898,7 @@ impl<'a> Parser<'a> {
 #[derive(Debug, Clone)]
 pub struct Tree<'a> {
     pub source_code: &'a str,
-    pub program: Program,
+    pub program: StmtRef,
     pub expr_pool: NodePool<ExprRef, Expr>,
     pub stmt_pool: NodePool<StmtRef, Stmt>,
     pub type_pool: NodePool<TypeRef, Type>,
@@ -974,18 +970,7 @@ impl<'a> Tree<'a> {
                     result.push_str("\n");
                     result.push_str(&params_str);
                 }
-                let decls_str = block
-                    .declarations
-                    .iter()
-                    .map(|d| self.visit_declaraction(d, level))
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                if !decls_str.is_empty() {
-                    result.push_str("\n");
-                    result.push_str(&decls_str);
-                }
-                result.push_str("\n");
-                result.push_str(&self.visit_stmt(block.statements, level));
+                result.push_str(&self.visit_stmt(*block, level));
                 result
             }
         }
@@ -1035,6 +1020,29 @@ impl<'a> Tree<'a> {
     fn visit_stmt(&self, id: StmtRef, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.stmt_pool.get(id) {
+            Stmt::Program { name, block } => {
+                format!(
+                    "Program {}\n{}",
+                    name.lexem(self.source_code),
+                    self.visit_stmt(*block, 0)
+                )
+            }
+            Stmt::Block {
+                declarations,
+                statements,
+            } => {
+                let mut result = declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, level))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                let compound: String = self.visit_stmt(*statements, level);
+                if !compound.is_empty() {
+                    result.push_str("\n");
+                    result.push_str(&compound);
+                }
+                result
+            }
             Stmt::Assign { left, right } => {
                 let left_str = self.visit_expr(*left, level + 1);
                 let right_str = self.visit_expr(*right, level + 1);
@@ -1168,24 +1176,6 @@ impl<'a> Tree<'a> {
 
 impl<'a> Display for Tree<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut result = format!("Program {}", self.program.name.lexem(self.source_code));
-        let decls = self
-            .program
-            .block
-            .declarations
-            .iter()
-            .map(|d| self.visit_declaraction(d, 0))
-            .collect::<Vec<String>>()
-            .join("\n");
-        if !decls.is_empty() {
-            result.push_str("\n");
-            result.push_str(&decls);
-        };
-        let compound: String = self.visit_stmt(self.program.block.statements, 0);
-        if !compound.is_empty() {
-            result.push_str("\n");
-            result.push_str(&compound);
-        }
-        write!(f, "{result}")
+        write!(f, "{}", self.visit_stmt(self.program, 0))
     }
 }

@@ -270,13 +270,7 @@ impl Interpreter {
         semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push(ActivationRecord::new("gloabl", 0));
-        tree.program
-            .block
-            .declarations
-            .iter()
-            .map(|d| self.visit_declaration(d, tree, semantic_metadata))
-            .collect::<Result<(), Error>>()?;
-        let _ = self.visit_stmt(tree.program.block.statements, tree, semantic_metadata)?;
+        let _ = self.visit_stmt(tree.program, tree, semantic_metadata)?;
         Ok(())
     }
 
@@ -287,6 +281,17 @@ impl Interpreter {
         semantic_metadata: &SemanticMetadata,
     ) -> Exec<()> {
         match tree.stmt_pool.get(stmt) {
+            Stmt::Program { name: _, block } => self.visit_stmt(*block, tree, semantic_metadata),
+            Stmt::Block {
+                declarations,
+                statements,
+            } => {
+                declarations
+                    .iter()
+                    .map(|d| self.visit_declaration(d, tree, semantic_metadata))
+                    .collect::<Result<(), Error>>()?;
+                self.visit_stmt(*statements, tree, semantic_metadata)
+            }
             Stmt::Compound(stmts) => {
                 for s in stmts {
                     match self.visit_stmt(*s, tree, semantic_metadata)? {

@@ -64,25 +64,23 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze(mut self, tree: &Tree) -> Result<SemanticMetadata, Error> {
-        let compund = tree.stmt_pool.get(tree.program.block.statements);
-        if !matches!(compund, Stmt::Compound(_)) {
-            return Err(Error::SemanticError {
-                msg: "main block should contain statement".to_string(),
-                error_code: None,
-            });
-        }
-        tree.program
-            .block
-            .declarations
-            .iter()
-            .map(|d| self.visit_declaraction(d, tree))
-            .collect::<Result<(), Error>>()?;
-        self.visit_stmt(tree.program.block.statements, tree)?;
+        self.visit_stmt(tree.program, tree)?;
         Ok(self.semantic_metadata)
     }
 
     fn visit_stmt(&mut self, node: StmtRef, tree: &Tree) -> Result<(), Error> {
         match tree.stmt_pool.get(node) {
+            Stmt::Program { name: _, block } => self.visit_stmt(*block, tree),
+            Stmt::Block {
+                declarations,
+                statements,
+            } => {
+                declarations
+                    .iter()
+                    .map(|d| self.visit_declaraction(d, tree))
+                    .collect::<Result<(), Error>>()?;
+                self.visit_stmt(*statements, tree)
+            }
             Stmt::Assign { left, right } => {
                 let left_expr = tree.expr_pool.get(*left);
                 match left_expr {
@@ -579,17 +577,17 @@ impl SemanticAnalyzer {
                     name: name.lexem(tree.source_code).into(),
                     params: params_vec,
                     return_type,
-                    body: crate::symbols::CallableBody::BlockAST(block.statements),
+                    body: crate::symbols::CallableBody::BlockAST(*block),
                 };
                 let callable_symbol_ref = self.semantic_metadata.callables.alloc(callable_symbol);
                 self.current_scope
                     .get_mut_enclosing_scope()
                     .expect("there is always enclosing scope here")
                     .define_callable(name.lexem(tree.source_code), callable_symbol_ref);
-                let statement = tree.stmt_pool.get(block.statements);
+                let block_stmt = tree.stmt_pool.get(*block);
                 if let Some(return_type_ref) = return_type {
                     let (return_assigned, can_fallthrough) =
-                        analyze_function(tree, name.lexem(tree.source_code), statement, false)?;
+                        analyze_function(tree, name.lexem(tree.source_code), block_stmt, false)?;
                     if can_fallthrough && !return_assigned {
                         return Err(Error::SemanticError {
                             msg: "function may not return a result".to_string(),
@@ -608,12 +606,7 @@ impl SemanticAnalyzer {
                     self.current_scope
                         .define_var(name.lexem(tree.source_code), return_var);
                 }
-                block
-                    .declarations
-                    .iter()
-                    .map(|d| self.visit_declaraction(d, tree))
-                    .collect::<Result<(), Error>>()?;
-                self.visit_stmt(block.statements, tree)?;
+                self.visit_stmt(*block, tree)?;
                 let enclosing_scope = self
                     .current_scope
                     .take_enclosing_scope()
@@ -778,6 +771,15 @@ fn analyze_function(
     in_assigned: bool,
 ) -> Result<(bool, bool), Error> {
     match stmt_node {
+        Stmt::Block {
+            declarations: _,
+            statements,
+        } => Ok(analyze_function(
+            tree,
+            function_name,
+            tree.stmt_pool.get(*statements),
+            in_assigned,
+        )?),
         Stmt::Exit(e) => {
             if let Some(_) = e {
                 return Ok((true, false));
