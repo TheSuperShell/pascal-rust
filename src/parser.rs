@@ -31,7 +31,7 @@ pub enum Expr {
         expr: ExprRef,
     },
     Call {
-        name: String,
+        name: Token,
         args: Vec<ExprRef>,
     },
     Index {
@@ -60,7 +60,7 @@ pub enum Stmt {
         body: StmtRef,
     },
     For {
-        var: String,
+        var: Token,
         init: ExprRef,
         end: ExprRef,
         body: StmtRef,
@@ -80,7 +80,7 @@ pub struct Condition {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub name: String,
+    pub name: Token,
     pub block: Block,
 }
 
@@ -106,7 +106,7 @@ pub enum Decl {
         literal: ExprRef,
     },
     Callable {
-        name: String,
+        name: Token,
         block: Block,
         params: Vec<Param>,
         return_type: Option<TypeRef>,
@@ -140,7 +140,7 @@ pub enum Type {
         end_val: ExprRef,
     },
     Enum {
-        items: Vec<String>,
+        items: Vec<Token>,
     },
 }
 
@@ -207,9 +207,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn id_str(&mut self) -> Result<String, Error> {
+    fn id_str(&mut self) -> Result<Token, Error> {
         if let TokenType::Id = &self.current_token.token_type() {
-            let id = self.current_token.lexem(self.lexer.source_code()).into();
+            let id = self.current_token;
             self.current_token = self.lexer.next()?;
             return Ok(id);
         }
@@ -951,7 +951,7 @@ impl<'a> Tree<'a> {
                 params,
                 return_type,
             } => {
-                let mut result = format!("{indent}Callable({name})");
+                let mut result = format!("{indent}Callable({})", name.lexem(self.source_code));
                 if let Some(r) = return_type {
                     result.push_str(&format!("\n{}", self.visit_type(*r, level + 1)));
                 }
@@ -1010,7 +1010,7 @@ impl<'a> Tree<'a> {
                 "{indent}Type(Enum)\n{}",
                 items
                     .iter()
-                    .map(|i| { format!("{indent}  {i}") })
+                    .map(|i| { format!("{indent}  {}", i.lexem(self.source_code)) })
                     .collect::<Vec<String>>()
                     .join("\n")
             ),
@@ -1067,7 +1067,8 @@ impl<'a> Tree<'a> {
                 let end_str = self.visit_expr(*end, level + 1);
                 let body_str = self.visit_stmt(*body, level + 1);
                 format!(
-                    "{indent}For({var})\n{init_str}\n{indent}  To\n{end_str}\n{indent}Do\n{body_str}"
+                    "{indent}For({})\n{init_str}\n{indent}  To\n{end_str}\n{indent}Do\n{body_str}",
+                    var.lexem(self.source_code)
                 )
             }
             Stmt::If {
@@ -1129,7 +1130,7 @@ impl<'a> Tree<'a> {
             }
             Expr::Var { name } => format!("{indent}Var({})", name.lexem(self.source_code)),
             Expr::Call { name, args } => {
-                let mut result = format!("{indent}Call({name})");
+                let mut result = format!("{indent}Call({})", name.lexem(self.source_code));
                 let param_str = args
                     .iter()
                     .map(|p| self.visit_expr(*p, level + 1))
@@ -1167,7 +1168,7 @@ impl<'a> Tree<'a> {
 
 impl<'a> Display for Tree<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut result = format!("Program {}", self.program.name);
+        let mut result = format!("Program {}", self.program.name.lexem(self.source_code));
         let decls = self
             .program
             .block

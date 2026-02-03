@@ -11,7 +11,7 @@ use crate::{
     parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
     symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
-    tokens::TokenType,
+    tokens::{Token, TokenType},
     utils::NodePool,
 };
 
@@ -396,8 +396,12 @@ impl Interpreter {
                 let init_val = self.visit_expr(*init, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end, tree, semantic_metadata)?;
                 let type_symbol = semantic_metadata.get_expr_type(init).unwrap();
-                self.call_stack
-                    .write(&LValue::Ref { name: var }, init_val.clone())?;
+                self.call_stack.write(
+                    &LValue::Ref {
+                        name: var.lexem(tree.source_code),
+                    },
+                    init_val.clone(),
+                )?;
                 let mut i = init_val.ordinal_rank()?;
                 while i != end_val.ordinal_rank()? {
                     let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
@@ -410,8 +414,12 @@ impl Interpreter {
                         }
                     }
                     i += 1;
-                    self.call_stack
-                        .write(&LValue::Ref { name: var }, type_symbol.oridnal_value(i)?)?;
+                    self.call_stack.write(
+                        &LValue::Ref {
+                            name: var.lexem(tree.source_code),
+                        },
+                        type_symbol.oridnal_value(i)?,
+                    )?;
                 }
                 Ok(ControlFlow::Continue(()))
             }
@@ -593,7 +601,7 @@ impl Interpreter {
     fn visit_callable(
         &mut self,
         node: &ExprRef,
-        name: &str,
+        name: &Token,
         args: &Vec<ExprRef>,
         tree: &Tree,
         semantic_metadata: &SemanticMetadata,
@@ -604,7 +612,10 @@ impl Interpreter {
             .expect("call should exist");
         match symbol.body {
             CallableBody::BlockAST(node) => {
-                let mut ar = ActivationRecord::new(name, self.call_stack.current_nesting() + 1);
+                let mut ar = ActivationRecord::new(
+                    name.lexem(tree.source_code),
+                    self.call_stack.current_nesting() + 1,
+                );
                 for ((inp, mode), arg) in symbol.params.iter().zip(args) {
                     match mode {
                         ParamMode::Var => {

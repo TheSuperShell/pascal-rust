@@ -9,7 +9,7 @@ use crate::{
         CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
         TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
-    tokens::TokenType,
+    tokens::{Token, TokenType},
     utils::NodePool,
 };
 
@@ -183,7 +183,7 @@ impl SemanticAnalyzer {
             } => {
                 let var_node = self.semantic_metadata.vars.get(
                     self.current_scope
-                        .lookup_var(var, false)
+                        .lookup_var(var.lexem(tree.source_code), false)
                         .ok_or(Error::SemanticError {
                             msg: "unkown_var".to_string(),
                             error_code: None,
@@ -420,7 +420,12 @@ impl SemanticAnalyzer {
             Type::Boolean => Ok(TypeSymbol::Boolean),
             Type::Char => Ok(TypeSymbol::Char),
             Type::String => Ok(TypeSymbol::String),
-            Type::Enum { items } => Ok(TypeSymbol::Enum(items.clone())),
+            Type::Enum { items } => Ok(TypeSymbol::Enum(
+                items
+                    .iter()
+                    .map(|t| t.lexem(tree.source_code).into())
+                    .collect(),
+            )),
             Type::Alias(v) => {
                 let alias = self
                     .current_scope
@@ -523,7 +528,11 @@ impl SemanticAnalyzer {
                 let new_scope_level = self.current_scope.get_scope_level() + 1;
                 let old =
                     std::mem::replace(&mut self.current_scope, Box::new(SymbolTable::default()));
-                self.current_scope = Box::new(SymbolTable::new(new_scope_level, &name, Some(old)));
+                self.current_scope = Box::new(SymbolTable::new(
+                    new_scope_level,
+                    name.lexem(tree.source_code),
+                    Some(old),
+                ));
                 let mut params_vec: Vec<(VarSymbolRef, ParamMode)> =
                     Vec::with_capacity(params.len());
                 for param in params {
@@ -556,7 +565,7 @@ impl SemanticAnalyzer {
                     None => None,
                 };
                 let callable_symbol = CallableSymbol {
-                    name: name.clone(),
+                    name: name.lexem(tree.source_code).into(),
                     params: params_vec,
                     return_type,
                     body: crate::symbols::CallableBody::BlockAST(block.statements),
@@ -565,11 +574,11 @@ impl SemanticAnalyzer {
                 self.current_scope
                     .get_mut_enclosing_scope()
                     .expect("there is always enclosing scope here")
-                    .define_callable(name, callable_symbol_ref);
+                    .define_callable(name.lexem(tree.source_code), callable_symbol_ref);
                 let statement = tree.stmt_pool.get(block.statements);
                 if let Some(return_type_ref) = return_type {
                     let (return_assigned, can_fallthrough) =
-                        analyze_function(tree, name, statement, false)?;
+                        analyze_function(tree, name.lexem(tree.source_code), statement, false)?;
                     if can_fallthrough && !return_assigned {
                         return Err(Error::SemanticError {
                             msg: "function may not return a result".to_string(),
@@ -582,10 +591,11 @@ impl SemanticAnalyzer {
                     });
                     self.current_scope.define_var("result", return_var);
                     let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
-                        name: name.clone(),
+                        name: name.lexem(tree.source_code).into(),
                         type_symbol: return_type_ref,
                     });
-                    self.current_scope.define_var(name, return_var);
+                    self.current_scope
+                        .define_var(name.lexem(tree.source_code), return_var);
                 }
                 block
                     .declarations
@@ -682,16 +692,16 @@ impl SemanticAnalyzer {
         &mut self,
         node: &ExprRef,
         tree: &Tree,
-        name: &str,
+        name: &Token,
         args: &Vec<ExprRef>,
     ) -> Result<Option<TypeSymbol>, Error> {
-        let callable_symbol_ref =
-            self.current_scope
-                .lookup_callable(name, false)
-                .ok_or(Error::SemanticError {
-                    msg: format!("could not find callable {name}"),
-                    error_code: None,
-                })?;
+        let callable_symbol_ref = self
+            .current_scope
+            .lookup_callable(name.lexem(tree.source_code), false)
+            .ok_or(Error::SemanticError {
+                msg: format!("could not find callable {}", name.lexem(tree.source_code)),
+                error_code: None,
+            })?;
         let mut callable_symbol = self
             .semantic_metadata
             .callables
