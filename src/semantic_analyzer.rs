@@ -21,7 +21,7 @@ pub struct SemanticMetadata {
 
     pub expr_type_map: HashMap<ExprRef, TypeSymbolRef>,
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
-    pub callable_symbols: HashMap<ExprRef, CallableSymbol>,
+    pub callable_symbols: HashMap<ExprRef, CallableSymbolRef>,
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
 }
 
@@ -99,8 +99,10 @@ impl SemanticAnalyzer {
                         });
                     }
                 }
-                let left_type = self.visit_expr(*left, tree)?;
-                let right_type = self.visit_expr(*right, tree)?;
+                let left_type_ref = self.visit_expr(*left, tree)?;
+                let right_type_ref = self.visit_expr(*right, tree)?;
+                let left_type = self.semantic_metadata.types.get(left_type_ref);
+                let right_type = self.semantic_metadata.types.get(right_type_ref);
                 if !assinable(&self.semantic_metadata.types, &left_type, &right_type) {
                     return Err(Error::SemanticError {
                         msg: "value not assignable".to_string(),
@@ -164,7 +166,9 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             Stmt::While { cond, body } => {
-                if !matches!(self.visit_expr(*cond, tree)?, TypeSymbol::Boolean) {
+                let type_ref = self.visit_expr(*cond, tree)?;
+                let type_symbol = self.semantic_metadata.types.get(type_ref);
+                if !matches!(type_symbol, TypeSymbol::Boolean) {
                     return Err(Error::SemanticError {
                         msg: "condition should be a boolean".to_string(),
                         error_code: None,
@@ -181,6 +185,10 @@ impl SemanticAnalyzer {
                 end,
                 body,
             } => {
+                let init_state_type_ref = self.visit_expr(*init, tree)?;
+                let end_state_type_ref = self.visit_expr(*end, tree)?;
+                let init_state_type = self.semantic_metadata.types.get(init_state_type_ref);
+                let end_state_type = self.semantic_metadata.types.get(end_state_type_ref);
                 let var_node = self.semantic_metadata.vars.get(
                     self.current_scope
                         .lookup_var(var.lexem(tree.source_code), false)
@@ -200,10 +208,7 @@ impl SemanticAnalyzer {
                             error_code: None,
                         });
                     }
-                }
-                .clone();
-                let init_state_type = self.visit_expr(*init, tree)?;
-                let end_state_type = self.visit_expr(*end, tree)?;
+                };
                 if !TypeSymbol::eq(
                     &self.semantic_metadata.types,
                     &init_state_type,
@@ -227,7 +232,7 @@ impl SemanticAnalyzer {
             }
         }
     }
-    fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbol, Error> {
+    fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let type_symbol = match tree.expr_pool.get(node) {
             Expr::LiteralBool(_) => Ok(TypeSymbol::Boolean),
             Expr::LiteralChar(_) => Ok(TypeSymbol::Char),
@@ -262,8 +267,10 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::BinOp { op, left, right } => {
-                let left_type = self.visit_expr(*left, tree)?;
-                let right_type = self.visit_expr(*right, tree)?;
+                let left_type_ref = self.visit_expr(*left, tree)?;
+                let right_type_ref = self.visit_expr(*right, tree)?;
+                let left_type = self.semantic_metadata.types.get(left_type_ref);
+                let right_type = self.semantic_metadata.types.get(right_type_ref);
                 let type_symbol = match op {
                     TokenType::Minus | TokenType::RealDiv | TokenType::Mul => {
                         match (&left_type, &right_type) {
@@ -341,7 +348,8 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::UnaryOp { op, expr: expr_ref } => {
-                let expr_type = self.visit_expr(*expr_ref, tree)?;
+                let expr_type_ref = self.visit_expr(*expr_ref, tree)?;
+                let expr_type = self.semantic_metadata.types.get(expr_type_ref);
                 let type_symbol = match (op, expr_type) {
                     (TokenType::Not, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                     (TokenType::Minus | TokenType::Plus, TypeSymbol::Integer) => {
@@ -356,25 +364,29 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::Call { name, args } => {
-                self.visit_callable(&node, tree, name, args)?
-                    .ok_or(Error::SemanticError {
-                        msg: "procedure cannot be used in an expression".to_string(),
-                        error_code: None,
-                    })
+                let type_ref =
+                    self.visit_callable(&node, tree, name, args)?
+                        .ok_or(Error::SemanticError {
+                            msg: "procedure cannot be used in an expression".to_string(),
+                            error_code: None,
+                        })?;
+                Ok(self.semantic_metadata.types.get(type_ref).clone())
             }
             Expr::Index {
                 base,
                 index_value,
                 other_indicies: _, // TODO: handle other indicies
             } => {
-                let actual_index_type = self.visit_expr(*index_value, tree)?;
-                let var_type = self.visit_expr(*base, tree)?;
+                let actual_index_type_ref = self.visit_expr(*index_value, tree)?;
+                let var_type_ref = self.visit_expr(*base, tree)?;
+                let actual_index_type = self.semantic_metadata.types.get(actual_index_type_ref);
+                let var_type = self.semantic_metadata.types.get(var_type_ref);
                 let base_type_ref = match var_type {
                     TypeSymbol::Array {
                         index_type: index_type_ref,
                         value_type,
                     } => {
-                        let index_type = self.semantic_metadata.types.get(index_type_ref);
+                        let index_type = self.semantic_metadata.types.get(*index_type_ref);
                         if !TypeSymbol::eq(
                             &self.semantic_metadata.types,
                             index_type,
@@ -403,7 +415,7 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                let base_type = self.semantic_metadata.types.get(base_type_ref);
+                let base_type = self.semantic_metadata.types.get(*base_type_ref);
                 Ok(base_type.clone())
             }
         }?;
@@ -411,7 +423,7 @@ impl SemanticAnalyzer {
         self.semantic_metadata
             .expr_type_map
             .insert(node, type_symbol_ref);
-        Ok(type_symbol)
+        Ok(type_symbol_ref)
     }
     fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let type_symbol = match tree.type_pool.get(node) {
@@ -434,8 +446,7 @@ impl SemanticAnalyzer {
                         msg: format!("unexpected type {:?}", v),
                         error_code: None,
                     })?;
-                let type_symbol = self.semantic_metadata.types.get(alias);
-                Ok(type_symbol.clone())
+                return Ok(alias);
             }
             Type::Array {
                 index_type,
@@ -453,8 +464,10 @@ impl SemanticAnalyzer {
                 Ok(TypeSymbol::DynamicArray(element_type))
             }
             Type::Range { start_val, end_val } => {
-                let start_val_type = self.visit_expr(*start_val, tree)?;
-                let end_val_type = self.visit_expr(*end_val, tree)?;
+                let start_val_type_ref = self.visit_expr(*start_val, tree)?;
+                let end_val_type_ref = self.visit_expr(*end_val, tree)?;
+                let start_val_type = self.semantic_metadata.types.get(start_val_type_ref);
+                let end_val_type = self.semantic_metadata.types.get(end_val_type_ref);
 
                 if !TypeSymbol::eq(
                     &self.semantic_metadata.types,
@@ -473,11 +486,10 @@ impl SemanticAnalyzer {
                     });
                 }
 
-                let start_val_type_ref = self.semantic_metadata.types.alloc(start_val_type);
                 Ok(TypeSymbol::Range(start_val_type_ref))
             }
         }?;
-        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol.clone());
+        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
         self.semantic_metadata
             .type_type_map
             .insert(node, type_symbol_ref);
@@ -660,10 +672,11 @@ impl SemanticAnalyzer {
                     });
                 }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
-                let type_symbol = self.semantic_metadata.types.get(type_symbol_ref).clone();
 
                 if let Some(expr) = default_value {
-                    let default_type = self.visit_expr(*expr, tree)?;
+                    let default_type_ref = self.visit_expr(*expr, tree)?;
+                    let default_type = self.semantic_metadata.types.get(default_type_ref);
+                    let type_symbol = self.semantic_metadata.types.get(type_symbol_ref);
                     if !TypeSymbol::eq(&self.semantic_metadata.types, &default_type, &type_symbol) {
                         return Err(Error::SemanticError {
                             msg: "default value should have the correct type".to_string(),
@@ -694,7 +707,7 @@ impl SemanticAnalyzer {
         tree: &Tree,
         name: &Token,
         args: &Vec<ExprRef>,
-    ) -> Result<Option<TypeSymbol>, Error> {
+    ) -> Result<Option<TypeSymbolRef>, Error> {
         let callable_symbol_ref = self
             .current_scope
             .lookup_callable(name.lexem(tree.source_code), false)
@@ -702,15 +715,16 @@ impl SemanticAnalyzer {
                 msg: format!("could not find callable {}", name.lexem(tree.source_code)),
                 error_code: None,
             })?;
-        let mut callable_symbol = self
-            .semantic_metadata
-            .callables
-            .get(callable_symbol_ref)
-            .clone();
-        for r in callable_symbol.params.iter_mut().zip_longest(args) {
+        let arg_expr = args
+            .iter()
+            .map(|a| self.visit_expr(*a, tree))
+            .collect::<Result<Vec<_>, Error>>()?;
+        let callable_symbol = self.semantic_metadata.callables.get(callable_symbol_ref);
+        let return_type = callable_symbol.return_type;
+        for r in callable_symbol.params.iter().zip_longest(arg_expr) {
             match r {
-                EitherOrBoth::Both((p, _), i) => {
-                    let expr_type = self.visit_expr(*i, tree)?;
+                EitherOrBoth::Both((p, _), expr_type) => {
+                    let expr_type = self.semantic_metadata.types.get(expr_type);
                     let var_symbol = self.semantic_metadata.vars.get(*p);
                     let param_type = match var_symbol {
                         VarSymbol::Var {
@@ -740,16 +754,15 @@ impl SemanticAnalyzer {
                 }
             }
         }
-        let return_type = callable_symbol
-            .return_type
-            .map(|r| self.semantic_metadata.types.get(r).clone());
         self.semantic_metadata
             .callable_symbols
-            .insert(*node, callable_symbol);
+            .insert(*node, callable_symbol_ref);
         Ok(return_type)
     }
     fn visit_condition(&mut self, cond: &Condition, tree: &Tree) -> Result<(), Error> {
-        if !matches!(self.visit_expr(cond.cond, tree)?, TypeSymbol::Boolean) {
+        let type_ref = self.visit_expr(cond.cond, tree)?;
+        let type_symbol = self.semantic_metadata.types.get(type_ref);
+        if !matches!(type_symbol, TypeSymbol::Boolean) {
             return Err(Error::SemanticError {
                 msg: "condition should be boolean".to_string(),
                 error_code: None,

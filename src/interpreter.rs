@@ -606,10 +606,12 @@ impl Interpreter {
         tree: &Tree,
         semantic_metadata: &SemanticMetadata,
     ) -> Result<Option<Value>, Error> {
-        let symbol = semantic_metadata
-            .callable_symbols
-            .get(node)
-            .expect("call should exist");
+        let symbol = semantic_metadata.callables.get(
+            *semantic_metadata
+                .callable_symbols
+                .get(node)
+                .expect("call should exist"),
+        );
         match symbol.body {
             CallableBody::BlockAST(node) => {
                 let mut ar = ActivationRecord::new(
