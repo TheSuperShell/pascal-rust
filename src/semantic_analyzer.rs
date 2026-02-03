@@ -37,7 +37,7 @@ impl SemanticMetadata {
 #[derive(Debug, Clone)]
 pub struct SemanticAnalyzer {
     semantic_metadata: SemanticMetadata,
-    current_scope: SymbolTable,
+    current_scope: Box<SymbolTable>,
     loop_depth: usize,
 }
 
@@ -58,7 +58,7 @@ impl SemanticAnalyzer {
                 callable_symbols: HashMap::new(),
                 var_symbols: HashMap::new(),
             },
-            current_scope,
+            current_scope: Box::new(current_scope),
             loop_depth: 0,
         }
     }
@@ -515,12 +515,10 @@ impl SemanticAnalyzer {
                 params,
                 return_type,
             } => {
-                let current_scope = Box::new(self.current_scope.clone()); // TODO: figure out how to avoid cloning
-                self.current_scope = SymbolTable::new(
-                    self.current_scope.get_scope_level() + 1,
-                    &name,
-                    Some(current_scope),
-                );
+                let new_scope_level = self.current_scope.get_scope_level() + 1;
+                let old =
+                    std::mem::replace(&mut self.current_scope, Box::new(SymbolTable::default()));
+                self.current_scope = Box::new(SymbolTable::new(new_scope_level, &name, Some(old)));
                 let mut params_vec: Vec<(VarSymbolRef, ParamMode)> =
                     Vec::with_capacity(params.len());
                 for param in params {
@@ -589,11 +587,10 @@ impl SemanticAnalyzer {
                     .map(|d| self.visit_declaraction(d, tree))
                     .collect::<Result<(), Error>>()?;
                 self.visit_stmt(block.statements, tree)?;
-                let enclosing_scope = *self
+                let enclosing_scope = self
                     .current_scope
-                    .get_mut_enclosing_scope()
-                    .expect("there is always enclosing scope here")
-                    .clone(); // TODO: figure out how to avoid cloning
+                    .take_enclosing_scope()
+                    .expect("there is always enclosing scope here");
                 self.current_scope = enclosing_scope;
                 Ok(())
             }

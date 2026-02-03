@@ -105,10 +105,10 @@ impl RangeSymbol {
     pub fn len(&self) -> usize {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }
-    pub fn get_index(&self, value: &Value) -> Result<usize, Error> {
-        let ord = value.ordinal_rank()?;
-        Ok((ord - self.lower_index) as usize)
-    }
+    // pub fn get_index(&self, value: &Value) -> Result<usize, Error> {
+    //     let ord = value.ordinal_rank()?;
+    //     Ok((ord - self.lower_index) as usize)
+    // }
 }
 
 #[derive(Debug, Clone)]
@@ -143,8 +143,7 @@ pub struct CallableSymbol {
     pub body: CallableBody,
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
     type_symbols: HashMap<String, TypeSymbolRef>,
     var_symbols: HashMap<String, VarSymbolRef>,
@@ -152,6 +151,12 @@ pub struct SymbolTable {
     scope_level: usize,
     scope_name: String,
     enclosing_scope: Option<Box<SymbolTable>>,
+}
+
+impl ToString for SymbolTable {
+    fn to_string(&self) -> String {
+        format!("Scope {}", self.scope_name)
+    }
 }
 
 impl SymbolTable {
@@ -175,6 +180,9 @@ impl SymbolTable {
     }
     pub fn get_mut_enclosing_scope(&mut self) -> Option<&mut Box<SymbolTable>> {
         self.enclosing_scope.as_mut()
+    }
+    pub fn take_enclosing_scope(&mut self) -> Option<Box<SymbolTable>> {
+        self.enclosing_scope.take()
     }
 
     pub fn define_type(&mut self, name: &str, symbol: TypeSymbolRef) {
