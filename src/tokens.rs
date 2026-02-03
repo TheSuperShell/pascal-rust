@@ -16,7 +16,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token {
     token_type: TokenType,
     span: Span,
@@ -35,9 +35,19 @@ impl Token {
     pub fn token_type(&self) -> &TokenType {
         &self.token_type
     }
+
+    pub fn lexem<'a>(&self, src: &'a str) -> &'a str {
+        self.span.lexem(src)
+    }
 }
 
-#[derive(Debug, Clone)]
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.token_type == other.token_type
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum TokenType {
     Program,
     Integer,
@@ -89,10 +99,10 @@ pub enum TokenType {
     RParen,
     LBracket,
     RBracket,
-    Id(String),
+    Id,
     IntegerConst(i64),
     RealConst(f64),
-    StringConst(String),
+    StringConst,
     CharConst(char),
     BooleanConst(bool),
     EOF,

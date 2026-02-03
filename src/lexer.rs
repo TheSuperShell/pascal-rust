@@ -84,7 +84,7 @@ impl<'a> Lexer<'a> {
                 self.pos.shift(1),
             )),
             Some(c) if self.char_tokens.contains_key(&c) => {
-                let token = self.char_tokens.get(&c).unwrap().clone();
+                let token = *self.char_tokens.get(&c).unwrap();
                 self.advance();
                 Ok(Token::new(token, self.previous_index(), 1, self.pos))
             }
@@ -177,10 +177,10 @@ impl<'a> Lexer<'a> {
         }
         let word = &self.source_code[current_index..self.index];
         Token::new(
-            self.keywords
+            *self
+                .keywords
                 .get(&word.to_uppercase())
-                .unwrap_or(&TokenType::Id(word.to_string()))
-                .clone(),
+                .unwrap_or(&TokenType::Id),
             current_index as u32,
             word.len() as u32,
             self.pos.shift(word.len() as u32),
@@ -254,7 +254,7 @@ impl<'a> Lexer<'a> {
         }
         let len = (end_index - current_index) as u32;
         Token::new(
-            TokenType::StringConst(self.source_code[current_index..end_index].to_string()),
+            TokenType::StringConst,
             current_index as u32,
             len,
             self.pos.shift(len),
@@ -263,5 +263,9 @@ impl<'a> Lexer<'a> {
 
     pub fn current_char(&self) -> Option<char> {
         self.current_char
+    }
+
+    pub fn source_code(&self) -> &'a str {
+        self.source_code
     }
 }

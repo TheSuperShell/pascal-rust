@@ -235,13 +235,13 @@ impl SemanticAnalyzer {
             Expr::LiteralReal(_) => Ok(TypeSymbol::Real),
             Expr::LiteralString(_) => Ok(TypeSymbol::String),
             Expr::Var { name } => {
-                let var_symbol_ref =
-                    self.current_scope
-                        .lookup_var(name, false)
-                        .ok_or(Error::SemanticError {
-                            msg: format!("unkown var {:?}", name),
-                            error_code: None,
-                        })?;
+                let var_symbol_ref = self
+                    .current_scope
+                    .lookup_var(name.lexem(tree.source_code), false)
+                    .ok_or(Error::SemanticError {
+                        msg: format!("unkown var {:?}", name),
+                        error_code: None,
+                    })?;
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
                 self.semantic_metadata
                     .var_symbols
@@ -422,13 +422,13 @@ impl SemanticAnalyzer {
             Type::String => Ok(TypeSymbol::String),
             Type::Enum { items } => Ok(TypeSymbol::Enum(items.clone())),
             Type::Alias(v) => {
-                let alias =
-                    self.current_scope
-                        .lookup_type(v, false)
-                        .ok_or(Error::SemanticError {
-                            msg: format!("unexpected type {:?}", v),
-                            error_code: None,
-                        })?;
+                let alias = self
+                    .current_scope
+                    .lookup_type(v.lexem(tree.source_code), false)
+                    .ok_or(Error::SemanticError {
+                        msg: format!("unexpected type {:?}", v),
+                        error_code: None,
+                    })?;
                 let type_symbol = self.semantic_metadata.types.get(alias);
                 Ok(type_symbol.clone())
             }
@@ -497,7 +497,7 @@ impl SemanticAnalyzer {
                     Expr::LiteralInteger(v) => ConstValue::Integer(*v),
                     Expr::LiteralBool(v) => ConstValue::Boolean(*v),
                     Expr::LiteralReal(v) => ConstValue::Real(*v),
-                    Expr::LiteralString(v) => ConstValue::String(v.clone()),
+                    Expr::LiteralString(v) => ConstValue::String(v.lexem(tree.source_code).into()),
                     Expr::LiteralChar(c) => ConstValue::Char(*c),
                     _ => {
                         return Err(Error::SemanticError {
@@ -510,7 +510,8 @@ impl SemanticAnalyzer {
                     .semantic_metadata
                     .vars
                     .alloc(crate::symbols::VarSymbol::Const { value: const_type });
-                self.current_scope.define_var(var_name, const_symbol);
+                self.current_scope
+                    .define_var(var_name.lexem(tree.source_code), const_symbol);
                 Ok(())
             }
             Decl::Callable {
@@ -538,11 +539,12 @@ impl SemanticAnalyzer {
                     };
                     let type_symbol_ref = self.visit_type(param.type_node, tree)?;
                     let var_symbol = VarSymbol::Var {
-                        name: var_name.clone(),
+                        name: var_name.lexem(tree.source_code).to_string(),
                         type_symbol: type_symbol_ref,
                     };
                     let var_symbol_ref = self.semantic_metadata.vars.alloc(var_symbol);
-                    self.current_scope.define_var(var_name, var_symbol_ref);
+                    self.current_scope
+                        .define_var(var_name.lexem(tree.source_code), var_symbol_ref);
                     let param_mode = match param.out {
                         true => ParamMode::Ref,
                         false => ParamMode::Var,
@@ -609,14 +611,18 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                if let Some(_) = self.current_scope.lookup_type(var_name, true) {
+                if let Some(_) = self
+                    .current_scope
+                    .lookup_type(var_name.lexem(tree.source_code), true)
+                {
                     return Err(Error::SemanticError {
-                        msg: format!("type {} is already defined", var_name),
+                        msg: format!("type {:?} is already defined", var_name),
                         error_code: None,
                     });
                 }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
-                self.current_scope.define_type(var_name, type_symbol_ref);
+                self.current_scope
+                    .define_type(var_name.lexem(tree.source_code), type_symbol_ref);
                 Ok(())
             }
             Decl::VarDecl {
@@ -634,7 +640,10 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                if let Some(_) = self.current_scope.lookup_var(var_name, true) {
+                if let Some(_) = self
+                    .current_scope
+                    .lookup_var(var_name.lexem(tree.source_code), true)
+                {
                     return Err(Error::SemanticError {
                         msg: format!("var {:?} is already defined", var_name),
                         error_code: None,
@@ -657,10 +666,11 @@ impl SemanticAnalyzer {
                     self.semantic_metadata
                         .vars
                         .alloc(crate::symbols::VarSymbol::Var {
-                            name: var_name.clone(),
+                            name: var_name.lexem(tree.source_code).into(),
                             type_symbol: type_symbol_ref,
                         });
-                self.current_scope.define_var(var_name, var_symbol);
+                self.current_scope
+                    .define_var(var_name.lexem(tree.source_code), var_symbol);
                 self.semantic_metadata
                     .expr_type_map
                     .insert(*var_ref, type_symbol_ref);
@@ -762,7 +772,8 @@ fn analyze_function(
             let left_expr = tree.expr_pool.get(*left);
             match left_expr {
                 Expr::Var { name } => Ok((
-                    ["result", &function_name].contains(&name.as_str()) || in_assigned,
+                    ["result", &function_name].contains(&name.lexem(tree.source_code))
+                        || in_assigned,
                     true,
                 )),
                 _ => Err(Error::SemanticError {

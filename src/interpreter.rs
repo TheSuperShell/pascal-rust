@@ -53,7 +53,7 @@ impl ToString for Value {
             Value::Integer(v) => format!("{v}"),
             Value::Real(v) => format!("{v}"),
             Value::Boolean(v) => format!("{v}"),
-            Value::String(v) => v.to_owned(),
+            Value::String(v) => v.into(),
             Value::Char(c) => c.to_string(),
             Value::Array(vals) => format!(
                 "[{}]",
@@ -299,7 +299,10 @@ impl Interpreter {
             Stmt::Assign { left, right } => {
                 let val = self.visit_expr(*right, tree, semantic_metadata)?;
                 match tree.expr_pool.get(*left) {
-                    Expr::Var { name } => self.call_stack.peek_mut().set_value(name, val),
+                    Expr::Var { name } => self
+                        .call_stack
+                        .peek_mut()
+                        .set_value(name.lexem(tree.source_code), val),
                     Expr::Index {
                         base,
                         index_value,
@@ -314,7 +317,7 @@ impl Interpreter {
                         match tree.expr_pool.get(*base) {
                             Expr::Var { name } => self.call_stack.write(
                                 &LValue::ArrIndex {
-                                    name: name,
+                                    name: name.lexem(tree.source_code),
                                     index: index_value as usize,
                                 },
                                 val,
@@ -444,7 +447,7 @@ impl Interpreter {
             Expr::LiteralChar(c) => Ok(Value::Char(*c)),
             Expr::LiteralInteger(i) => Ok(Value::Integer(*i)),
             Expr::LiteralReal(r) => Ok(Value::Real(*r)),
-            Expr::LiteralString(s) => Ok(Value::String(s.to_owned())),
+            Expr::LiteralString(s) => Ok(Value::String(s.lexem(tree.source_code).into())),
             Expr::Var { name: _ } => {
                 let var_symbol_ref = semantic_metadata
                     .var_symbols
@@ -497,13 +500,13 @@ impl Interpreter {
                 let index_value = index_value.ordinal_rank()?;
                 let arr_value = self
                     .call_stack
-                    .lookup_value(var_name)
+                    .lookup_value(var_name.lexem(tree.source_code))
                     .expect("should exist");
                 match arr_value {
                     Value::Array(_) => Ok(self
                         .call_stack
                         .read(&LValue::ArrIndex {
-                            name: var_name,
+                            name: var_name.lexem(tree.source_code),
                             index: index_value as usize,
                         })?
                         .clone()),
@@ -538,7 +541,9 @@ impl Interpreter {
                     Expr::Var { name } => name,
                     _ => panic!("unreachable"),
                 };
-                self.call_stack.peek_mut().set(var_name);
+                self.call_stack
+                    .peek_mut()
+                    .set(var_name.lexem(tree.source_code));
                 let type_symbol = semantic_metadata.types.get(
                     *semantic_metadata
                         .expr_type_map
@@ -560,12 +565,15 @@ impl Interpreter {
                                 .unwrap(),
                         )
                         .len();
-                    self.call_stack
-                        .peek_mut()
-                        .set_value(var_name, Value::Array(vec![None; range_length]));
+                    self.call_stack.peek_mut().set_value(
+                        var_name.lexem(tree.source_code),
+                        Value::Array(vec![None; range_length]),
+                    );
                 } else if let Some(val) = default_value {
                     let value = self.visit_expr(*val, tree, semantic_metadata)?;
-                    self.call_stack.peek_mut().set_value(var_name, value);
+                    self.call_stack
+                        .peek_mut()
+                        .set_value(var_name.lexem(tree.source_code), value);
                 };
                 Ok(())
             }
@@ -646,7 +654,9 @@ impl Interpreter {
                             .visit_expr(*a, tree, semantic_metadata)
                             .map(|e| LValue::Value(e)),
                         ParamMode::Ref => match tree.expr_pool.get(*a) {
-                            Expr::Var { name } => Ok(LValue::Ref { name }),
+                            Expr::Var { name } => Ok(LValue::Ref {
+                                name: name.lexem(tree.source_code),
+                            }),
                             _ => panic!("unreachable"),
                         },
                     })

@@ -17,7 +17,7 @@ use crate::{
 fn main() -> Result<(), Error> {
     let source_code = std::fs::read_to_string("examples/factorial.pas").expect("file should exist");
     let lexer = Lexer::new(&source_code);
-    let mut parser = Parser::new(lexer)?;
+    let parser = Parser::new(lexer)?;
     let tree = parser.parse()?;
     // println!("{tree}");
     let semantic_analyzer = SemanticAnalyzer::new();

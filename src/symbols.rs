@@ -71,7 +71,7 @@ impl Into<Value> for ConstValue {
             ConstValue::Integer(i) => Value::Integer(i),
             ConstValue::Boolean(b) => Value::Boolean(b),
             ConstValue::Char(c) => Value::Char(c),
-            ConstValue::String(s) => Value::String(s),
+            ConstValue::String(s) => Value::String(s.into()),
             ConstValue::Real(r) => Value::Real(r),
         }
     }

@@ -14,7 +14,7 @@ define_ref!(TypeRef);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Var {
-        name: String,
+        name: Token,
     },
     BinOp {
         op: TokenType,
@@ -25,7 +25,7 @@ pub enum Expr {
     LiteralReal(f64),
     LiteralBool(bool),
     LiteralChar(char),
-    LiteralString(String),
+    LiteralString(Token),
     UnaryOp {
         op: TokenType,
         expr: ExprRef,
@@ -127,7 +127,7 @@ pub enum Type {
     String,
     Char,
     Real,
-    Alias(String),
+    Alias(Token),
     Array {
         index_type: TypeRef,
         element_type: TypeRef,
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
     }
 
     fn eat(&mut self, expected: TokenType) -> Result<(), Error> {
-        let token = self.current_token.clone();
+        let token = self.current_token;
         if token.token_type() != &expected {
             return Err(Error::ParserError {
                 msg: format!(
@@ -196,9 +196,9 @@ impl<'a> Parser<'a> {
     /// id:
     /// ID
     fn id(&mut self) -> Result<ExprRef, Error> {
-        if let TokenType::Id(id) = &self.current_token.token_type() {
-            let id = id.clone();
-            self.eat(TokenType::Id(id.clone()))?;
+        if let TokenType::Id = &self.current_token.token_type() {
+            let id = self.current_token;
+            self.eat(TokenType::Id)?;
             return Ok(self.expr_pool.alloc(Expr::Var { name: id }));
         }
         Err(Error::ParserError {
@@ -208,8 +208,8 @@ impl<'a> Parser<'a> {
     }
 
     fn id_str(&mut self) -> Result<String, Error> {
-        if let TokenType::Id(id) = &self.current_token.token_type() {
-            let id = id.clone();
+        if let TokenType::Id = &self.current_token.token_type() {
+            let id = self.current_token.lexem(self.lexer.source_code()).into();
             self.current_token = self.lexer.next()?;
             return Ok(id);
         }
@@ -253,7 +253,7 @@ impl<'a> Parser<'a> {
                     self.eat(TokenType::Const)?;
                     decls.extend(self.const_declaration()?);
                     self.eat(TokenType::Semi)?;
-                    while let TokenType::Id(_) = self.current_token.token_type() {
+                    while let TokenType::Id = self.current_token.token_type() {
                         decls.extend(self.const_declaration()?);
                         self.eat(TokenType::Semi)?;
                     }
@@ -262,7 +262,7 @@ impl<'a> Parser<'a> {
                     self.eat(TokenType::Type)?;
                     decls.extend(self.type_declaration()?);
                     self.eat(TokenType::Semi)?;
-                    while let TokenType::Id(_) = self.current_token.token_type() {
+                    while let TokenType::Id = self.current_token.token_type() {
                         decls.extend(self.type_declaration()?);
                         self.eat(TokenType::Semi)?;
                     }
@@ -271,7 +271,7 @@ impl<'a> Parser<'a> {
                     self.eat(TokenType::Var)?;
                     decls.extend(self.var_declaration()?);
                     self.eat(TokenType::Semi)?;
-                    while let TokenType::Id(_) = self.current_token.token_type() {
+                    while let TokenType::Id = self.current_token.token_type() {
                         decls.extend(self.var_declaration()?);
                         self.eat(TokenType::Semi)?;
                     }
@@ -450,11 +450,12 @@ impl<'a> Parser<'a> {
     /// array_spec |
     /// range_spec
     fn type_spec(&mut self) -> Result<TypeRef, Error> {
-        let token = self.current_token.token_type().clone();
+        let token = self.current_token.token_type();
         match token {
-            TokenType::Id(v) => {
+            TokenType::Id => {
+                let token = self.current_token;
                 self.current_token = self.lexer.next()?;
-                Ok(self.type_pool.alloc(Type::Alias(v)))
+                Ok(self.type_pool.alloc(Type::Alias(token)))
             }
             TokenType::Integer => {
                 self.current_token = self.lexer.next()?;
@@ -519,13 +520,13 @@ impl<'a> Parser<'a> {
     /// (id | literal) Dot Dot (id | literal)
     fn range_spec(&mut self) -> Result<TypeRef, Error> {
         let start = match self.current_token.token_type() {
-            TokenType::Id(_) => self.id()?,
+            TokenType::Id => self.id()?,
             _ => self.literal()?,
         };
         self.eat(TokenType::Dot)?;
         self.eat(TokenType::Dot)?;
         let end = match self.current_token.token_type() {
-            TokenType::Id(_) => self.id()?,
+            TokenType::Id => self.id()?,
             _ => self.literal()?,
         };
         Ok(self.type_pool.alloc(Type::Range {
@@ -576,7 +577,7 @@ impl<'a> Parser<'a> {
                 Ok(self.stmt_pool.alloc(Stmt::Break))
             }
             TokenType::Begin => self.compound_statement(),
-            TokenType::Id(_) => match self.lexer.current_char() {
+            TokenType::Id => match self.lexer.current_char() {
                 Some('(') => self.call_statement(),
                 _ => self.assignment_statement(),
             },
@@ -720,7 +721,7 @@ impl<'a> Parser<'a> {
     fn compare_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.add_expr()?;
         while self.current_token.token_type().is_compare_operator() {
-            let token = self.current_token.token_type().clone();
+            let token = *self.current_token.token_type();
             self.current_token = self.lexer.next()?;
             let right = self.add_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -740,7 +741,7 @@ impl<'a> Parser<'a> {
             self.current_token.token_type(),
             TokenType::Plus | TokenType::Minus
         ) {
-            let token = self.current_token.token_type().clone();
+            let token = *self.current_token.token_type();
             self.current_token = self.lexer.next()?;
             let right = self.mult_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -760,7 +761,7 @@ impl<'a> Parser<'a> {
             self.current_token.token_type(),
             TokenType::Mul | TokenType::RealDiv | TokenType::IntegerDiv
         ) {
-            let token = self.current_token.token_type().clone();
+            let token = *self.current_token.token_type();
             self.current_token = self.lexer.next()?;
             let right = self.factor()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -783,7 +784,7 @@ impl<'a> Parser<'a> {
     fn factor(&mut self) -> Result<ExprRef, Error> {
         match self.current_token.token_type() {
             TokenType::Plus | TokenType::Minus => {
-                let token = self.current_token.token_type().clone();
+                let token = *self.current_token.token_type();
                 self.current_token = self.lexer.next()?;
                 let factor = self.factor()?;
                 return Ok(self.expr_pool.alloc(Expr::UnaryOp {
@@ -802,7 +803,7 @@ impl<'a> Parser<'a> {
             TokenType::IntegerConst(_)
             | TokenType::RealConst(_)
             | TokenType::BooleanConst(_)
-            | TokenType::StringConst(_)
+            | TokenType::StringConst
             | TokenType::CharConst(_) => self.literal(),
             TokenType::LParen => {
                 self.eat(TokenType::LParen)?;
@@ -810,7 +811,7 @@ impl<'a> Parser<'a> {
                 self.eat(TokenType::RParen)?;
                 return expr;
             }
-            TokenType::Id(_) => match self.lexer.current_char() {
+            TokenType::Id => match self.lexer.current_char() {
                 Some('(') => self.call_expr(),
                 Some('[') => self.index_of_statement(),
                 _ => self.id(),
@@ -869,12 +870,14 @@ impl<'a> Parser<'a> {
     }
 
     fn literal(&mut self) -> Result<ExprRef, Error> {
-        let token = self.current_token.token_type().clone();
+        let token = *self.current_token.token_type();
         self.current_token = self.lexer.next()?;
         match token {
             TokenType::IntegerConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralInteger(v))),
             TokenType::RealConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralReal(v))),
-            TokenType::StringConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralString(v))),
+            TokenType::StringConst => Ok(self
+                .expr_pool
+                .alloc(Expr::LiteralString(self.current_token))),
             TokenType::CharConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralChar(v))),
             TokenType::BooleanConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralBool(v))),
             _ => Err(Error::ParserError {
@@ -884,26 +887,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Tree, Error> {
+    pub fn parse(mut self) -> Result<Tree<'a>, Error> {
         let program = self.program()?;
         Ok(Tree {
+            source_code: self.lexer.source_code(),
             program,
-            expr_pool: self.expr_pool.clone(),
-            stmt_pool: self.stmt_pool.clone(),
-            type_pool: self.type_pool.clone(),
+            expr_pool: self.expr_pool,
+            stmt_pool: self.stmt_pool,
+            type_pool: self.type_pool,
         })
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Tree {
+pub struct Tree<'a> {
+    pub source_code: &'a str,
     pub program: Program,
     pub expr_pool: NodePool<ExprRef, Expr>,
     pub stmt_pool: NodePool<StmtRef, Stmt>,
     pub type_pool: NodePool<TypeRef, Type>,
 }
 
-impl Tree {
+impl<'a> Tree<'a> {
     fn visit_declaraction(&self, decl: &Decl, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match decl {
@@ -1000,7 +1005,7 @@ impl Tree {
                     self.visit_expr(*end_val, level + 1)
                 )
             }
-            Type::Alias(v) => format!("{indent}TypeAlias({v})"),
+            Type::Alias(v) => format!("{indent}TypeAlias({})", v.lexem(self.source_code)),
             Type::Enum { items } => format!(
                 "{indent}Type(Enum)\n{}",
                 items
@@ -1119,8 +1124,10 @@ impl Tree {
             Expr::LiteralBool(v) => format!("{indent}LitBool({v})"),
             Expr::LiteralChar(v) => format!("{indent}LitChar('{v}')"),
             Expr::LiteralReal(v) => format!("{indent}LitReal({v})"),
-            Expr::LiteralString(v) => format!("{indent}LitString(\"{v}\")"),
-            Expr::Var { name } => format!("{indent}Var({name})"),
+            Expr::LiteralString(v) => {
+                format!("{indent}LitString(\"{}\")", v.lexem(self.source_code))
+            }
+            Expr::Var { name } => format!("{indent}Var({})", name.lexem(self.source_code)),
             Expr::Call { name, args } => {
                 let mut result = format!("{indent}Call({name})");
                 let param_str = args
@@ -1158,7 +1165,7 @@ impl Tree {
     }
 }
 
-impl Display for Tree {
+impl<'a> Display for Tree<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut result = format!("Program {}", self.program.name);
         let decls = self
