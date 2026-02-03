@@ -14,6 +14,19 @@ impl Pos {
         }
     }
 }
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: u32,
+    pub len: u32,
+}
+
+impl Span {
+    pub fn lexem<'a>(&self, src: &'a str) -> &'a str {
+        let s = self.start as usize;
+        let e = s + self.len as usize;
+        &src[s..e]
+    }
+}
 #[derive(Debug, Clone)]
 pub struct NodePool<Ref, T> {
     items: Vec<T>,

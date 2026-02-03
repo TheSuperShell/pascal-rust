@@ -17,21 +17,21 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Signal {
+    Exit(Option<Value>),
     Break,
     Continue,
-    Exit(Option<Value>),
 }
 
 pub type Exec<T> = Result<ControlFlow<Signal, T>, Error>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    Array(Vec<Option<Box<Value>>>),
+    String(String),
     Integer(i64),
     Real(f64),
-    Boolean(bool),
-    String(String),
     Char(char),
-    Array(Vec<Option<Box<Value>>>),
+    Boolean(bool),
 }
 
 impl Value {
@@ -96,9 +96,9 @@ impl Display for Ref {
 
 #[derive(Debug, Clone)]
 pub struct ActivationRecord {
+    members: HashMap<String, Ref>,
     name: String,
     nesting_level: usize,
-    members: HashMap<String, Ref>,
 }
 
 impl ToString for ActivationRecord {
@@ -249,10 +249,9 @@ impl BuiltinCtx for CallStack {
 }
 
 pub struct Interpreter {
-    call_stack: CallStack,
-
-    range_symbols: NodePool<TypeSymbolRef, RangeSymbol>,
     type_range_map: HashMap<TypeSymbolRef, TypeSymbolRef>,
+    call_stack: CallStack,
+    range_symbols: NodePool<TypeSymbolRef, RangeSymbol>,
 }
 
 impl Interpreter {

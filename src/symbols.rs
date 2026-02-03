@@ -138,9 +138,9 @@ pub enum ParamMode {
 #[derive(Debug, Clone)]
 pub struct CallableSymbol {
     pub name: String,
-    pub return_type: Option<TypeSymbolRef>,
     pub params: Vec<(VarSymbolRef, ParamMode)>,
     pub body: CallableBody,
+    pub return_type: Option<TypeSymbolRef>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -148,8 +148,8 @@ pub struct SymbolTable {
     type_symbols: HashMap<String, TypeSymbolRef>,
     var_symbols: HashMap<String, VarSymbolRef>,
     callable_symbols: HashMap<String, CallableSymbolRef>,
-    scope_level: usize,
     scope_name: String,
+    scope_level: usize,
     enclosing_scope: Option<Box<SymbolTable>>,
 }
 

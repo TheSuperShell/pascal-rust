@@ -3,8 +3,8 @@ use std::fmt::Display;
 use crate::{
     error::{Error, ErrorCode},
     lexer::Lexer,
-    tokens::{Span, Token, TokenType},
-    utils::{NodePool, Pos, define_ref},
+    tokens::{Token, TokenType},
+    utils::{NodePool, Pos, Span, define_ref},
 };
 
 define_ref!(ExprRef);
@@ -30,19 +30,16 @@ where
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Var {
-        name: Token,
+    Index {
+        other_indicies: Vec<ExprRef>,
+        base: ExprRef,
+        index_value: ExprRef,
     },
     BinOp {
         op: TokenType,
         left: ExprRef,
         right: ExprRef,
     },
-    LiteralInteger(i64),
-    LiteralReal(f64),
-    LiteralBool(bool),
-    LiteralChar(char),
-    LiteralString(Token),
     UnaryOp {
         op: TokenType,
         expr: ExprRef,
@@ -51,15 +48,29 @@ pub enum Expr {
         name: Token,
         args: Vec<ExprRef>,
     },
-    Index {
-        base: ExprRef,
-        index_value: ExprRef,
-        other_indicies: Vec<ExprRef>,
+    Var {
+        name: Token,
     },
+    LiteralInteger(i64),
+    LiteralReal(f64),
+    LiteralBool(bool),
+    LiteralChar(char),
+    LiteralString(Token),
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    For {
+        var: Token,
+        init: ExprRef,
+        end: ExprRef,
+        body: StmtRef,
+    },
+    If {
+        elifs: Vec<Condition>,
+        cond: Condition,
+        else_statement: Option<StmtRef>,
+    },
     Program {
         name: Token,
         block: StmtRef,
@@ -68,26 +79,12 @@ pub enum Stmt {
         declarations: Vec<Decl>,
         statements: StmtRef,
     },
-    Break,
-    Continue,
     Assign {
         left: ExprRef,
         right: ExprRef,
     },
-    NoOp,
-    If {
-        cond: Condition,
-        elifs: Vec<Condition>,
-        else_statement: Option<StmtRef>,
-    },
     While {
         cond: ExprRef,
-        body: StmtRef,
-    },
-    For {
-        var: Token,
-        init: ExprRef,
-        end: ExprRef,
         body: StmtRef,
     },
     Exit(Option<ExprRef>),
@@ -95,6 +92,9 @@ pub enum Stmt {
     Call {
         call: ExprRef,
     },
+    Break,
+    Continue,
+    NoOp,
 }
 
 #[derive(Debug, Clone)]
@@ -106,9 +106,9 @@ pub struct Condition {
 #[derive(Debug, Clone)]
 pub enum Decl {
     VarDecl {
+        default_value: Option<ExprRef>,
         var: ExprRef,
         type_node: TypeRef,
-        default_value: Option<ExprRef>,
     },
     TypeDecl {
         var: ExprRef,
@@ -119,18 +119,18 @@ pub enum Decl {
         literal: ExprRef,
     },
     Callable {
-        name: Token,
-        block: StmtRef,
         params: Vec<Param>,
+        name: Token,
         return_type: Option<TypeRef>,
+        block: StmtRef,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct Param {
     pub var: ExprRef,
-    pub out: bool,
     pub type_node: TypeRef,
+    pub out: bool,
 }
 
 #[derive(Debug, Clone)]

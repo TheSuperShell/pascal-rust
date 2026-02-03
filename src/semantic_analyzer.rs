@@ -15,14 +15,14 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SemanticMetadata {
-    pub types: NodePool<TypeSymbolRef, TypeSymbol>,
-    pub vars: NodePool<VarSymbolRef, VarSymbol>,
-    pub callables: NodePool<CallableSymbolRef, CallableSymbol>,
-
     pub expr_type_map: HashMap<ExprRef, TypeSymbolRef>,
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
     pub callable_symbols: HashMap<ExprRef, CallableSymbolRef>,
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
+
+    pub types: NodePool<TypeSymbolRef, TypeSymbol>,
+    pub vars: NodePool<VarSymbolRef, VarSymbol>,
+    pub callables: NodePool<CallableSymbolRef, CallableSymbol>,
 }
 
 impl SemanticMetadata {

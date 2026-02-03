@@ -1,20 +1,6 @@
 use std::collections::HashMap;
 
-use crate::utils::Pos;
-
-#[derive(Debug, Clone, Copy)]
-pub struct Span {
-    pub start: u32,
-    pub len: u32,
-}
-
-impl Span {
-    pub fn lexem<'a>(&self, src: &'a str) -> &'a str {
-        let s = self.start as usize;
-        let e = s + self.len as usize;
-        &src[s..e]
-    }
-}
+use crate::utils::{Pos, Span};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token {
@@ -53,6 +39,10 @@ impl PartialEq for Token {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TokenType {
+    IntegerConst(i64),
+    RealConst(f64),
+    CharConst(char),
+    BooleanConst(bool),
     Program,
     Integer,
     Real,
@@ -104,11 +94,7 @@ pub enum TokenType {
     LBracket,
     RBracket,
     Id,
-    IntegerConst(i64),
-    RealConst(f64),
     StringConst,
-    CharConst(char),
-    BooleanConst(bool),
     EOF,
 }
 

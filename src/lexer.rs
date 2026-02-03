@@ -5,12 +5,12 @@ use crate::{
 };
 
 pub struct Lexer<'a> {
+    char_tokens: std::collections::HashMap<char, TokenType>,
+    keywords: std::collections::HashMap<String, TokenType>,
     source_code: &'a str,
     index: usize,
     pos: Pos,
     current_char: Option<char>,
-    keywords: std::collections::HashMap<String, TokenType>,
-    char_tokens: std::collections::HashMap<char, TokenType>,
 }
 
 impl<'a> Lexer<'a> {
