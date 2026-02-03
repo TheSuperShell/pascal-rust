@@ -1,38 +1,12 @@
-program factorial;
-    const pi = 3.14;
-    type age = 0..100;
-        some_values = (
-            one,
-            two,
-            three
-        );
-    var my_age: age = 25;
-    function some_func(a, b: integer; c: real): string;
+program fib;
+    function fib(val: integer): integer;
     begin
-        c := a + b;
-        result := 'hello'
+        if val <= 2 then
+            exit(val);
+        exit(fib(val - 1) + fib(val - 2));
     end;
-    var 2: string;
-    var arr: array[0..100] of integer;
-    a, b: boolean = true;
-    i: integer;
+    var i: integer;
 begin
-    my_age := 1000;
-    writeln(my_age);
-    for i := 0 to 100 do
-        begin
-            if i > 50  then
-                begin
-                    arr[i] := 50;
-                    continue;
-                end;
-            arr[i] := i * i;
-        end;
-    writeln(arr);
-    a := (5 > 10) = true and b;
-    writeln(a);
-    writeln(pi);
-    b := a;
-    c := some_func(1, 2, 3);
-    writeln(c);
+    for i := 1 to 25 do
+        writeln(fib(i))
 end.
