@@ -1,3 +1,5 @@
+use crate::utils::Pos;
+
 #[derive(Debug)]
 pub enum ErrorCode {}
 
@@ -5,6 +7,7 @@ pub enum ErrorCode {}
 pub enum Error {
     LexerError {
         msg: String,
+        pos: Pos,
         error_code: Option<ErrorCode>,
     },
     ParserError {
@@ -23,8 +26,16 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::LexerError { msg, error_code } => {
-                write!(f, "Lexer Error {:?}: {}", error_code, msg)
+            Error::LexerError {
+                msg,
+                pos,
+                error_code,
+            } => {
+                write!(
+                    f,
+                    "Lexer Error at row {} col {} ({:?}): {}",
+                    pos.row, pos.col, error_code, msg
+                )
             }
             Error::ParserError { msg, error_code } => {
                 write!(f, "Parser Error {:?}: {}", error_code, msg)

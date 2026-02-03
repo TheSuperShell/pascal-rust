@@ -1,26 +1,43 @@
-use crate::{error::Error, tokens::Token};
+use crate::{
+    error::Error,
+    tokens::{Token, TokenType},
+    utils::Pos,
+};
 
-pub struct Lexer {
-    source_code: String,
+pub struct Lexer<'a> {
+    source_code: &'a str,
     index: usize,
+    pos: Pos,
     current_char: Option<char>,
-    keywords: std::collections::HashMap<String, Token>,
-    char_tokens: std::collections::HashMap<char, Token>,
+    keywords: std::collections::HashMap<String, TokenType>,
+    char_tokens: std::collections::HashMap<char, TokenType>,
 }
 
-impl Lexer {
-    pub fn new(source_code: &str) -> Self {
+impl<'a> Lexer<'a> {
+    pub fn new(source_code: &'a str) -> Self {
         let first_char = source_code.chars().nth(0);
         Lexer {
-            source_code: source_code.to_string(),
+            source_code,
             index: 0,
+            pos: Pos { row: 1, col: 1 },
             current_char: first_char,
-            keywords: Token::get_keywords(),
-            char_tokens: Token::get_char_tokens(),
+            keywords: TokenType::get_keywords(),
+            char_tokens: TokenType::get_char_tokens(),
         }
     }
 
     fn advance(&mut self) {
+        if let Some('\n') = self.current_char {
+            self.pos = Pos {
+                row: self.pos.row + 1,
+                col: 1,
+            }
+        } else {
+            self.pos = Pos {
+                col: self.pos.col + 1,
+                row: self.pos.row,
+            }
+        }
         self.index += 1;
         self.current_char = self.source_code.chars().nth(self.index);
     }
@@ -48,6 +65,9 @@ impl Lexer {
     pub fn peek(&self) -> Option<char> {
         self.source_code.chars().nth(self.index + 1)
     }
+    fn previous_index(&self) -> u32 {
+        (self.index - 1) as u32
+    }
 
     pub fn next(&mut self) -> Result<Token, Error> {
         self.trim_whitespace();
@@ -57,20 +77,35 @@ impl Lexer {
             self.comment();
         }
         match self.current_char {
-            None => Ok(Token::EOF),
+            None => Ok(Token::new(
+                TokenType::EOF,
+                self.previous_index(),
+                0,
+                self.pos.shift(1),
+            )),
             Some(c) if self.char_tokens.contains_key(&c) => {
                 let token = self.char_tokens.get(&c).unwrap().clone();
                 self.advance();
-                Ok(token)
+                Ok(Token::new(token, self.previous_index(), 1, self.pos))
             }
             Some(c) if c == '>' => {
                 self.advance();
                 match self.current_char {
                     Some(c) if c == '=' => {
                         self.advance();
-                        return Ok(Token::GreaterEqual);
+                        return Ok(Token::new(
+                            TokenType::GreaterEqual,
+                            self.previous_index() - 1,
+                            2,
+                            self.pos.shift(2),
+                        ));
                     }
-                    _ => Ok(Token::GreaterThen),
+                    _ => Ok(Token::new(
+                        TokenType::GreaterThen,
+                        self.previous_index(),
+                        1,
+                        self.pos.shift(1),
+                    )),
                 }
             }
             Some(c) if c == '<' => {
@@ -78,13 +113,28 @@ impl Lexer {
                 match self.current_char {
                     Some(c) if c == '=' => {
                         self.advance();
-                        return Ok(Token::LessEqual);
+                        return Ok(Token::new(
+                            TokenType::LessEqual,
+                            self.previous_index() - 1,
+                            2,
+                            self.pos.shift(2),
+                        ));
                     }
                     Some(c) if c == '>' => {
                         self.advance();
-                        return Ok(Token::NotEqual);
+                        return Ok(Token::new(
+                            TokenType::NotEqual,
+                            self.previous_index() - 1,
+                            2,
+                            self.pos.shift(2),
+                        ));
                     }
-                    _ => Ok(Token::LessThen),
+                    _ => Ok(Token::new(
+                        TokenType::LessThen,
+                        self.previous_index(),
+                        1,
+                        self.pos.shift(1),
+                    )),
                 }
             }
             Some(c) if c == ':' => {
@@ -92,16 +142,27 @@ impl Lexer {
                 match self.current_char {
                     Some(c) if c == '=' => {
                         self.advance();
-                        return Ok(Token::Assign);
+                        return Ok(Token::new(
+                            TokenType::Assign,
+                            self.previous_index() - 1,
+                            2,
+                            self.pos.shift(2),
+                        ));
                     }
-                    _ => Ok(Token::Colon),
+                    _ => Ok(Token::new(
+                        TokenType::Colon,
+                        self.previous_index(),
+                        1,
+                        self.pos.shift(1),
+                    )),
                 }
             }
             Some(c) if c.is_digit(10) => Ok(self.number()),
             Some(c) if c == '\'' => Ok(self.string()),
             Some(c) if c.is_alphanumeric() || c == '_' => Ok(self.id()),
             _ => Err(Error::LexerError {
-                msg: "unkown char".to_string(),
+                msg: format!("unexpected character {:?}", self.current_char),
+                pos: self.pos,
                 error_code: None,
             }),
         }
@@ -115,10 +176,15 @@ impl Lexer {
             self.advance();
         }
         let word = &self.source_code[current_index..self.index];
-        self.keywords
-            .get(&word.to_uppercase())
-            .unwrap_or(&Token::Id(word.to_string()))
-            .clone()
+        Token::new(
+            self.keywords
+                .get(&word.to_uppercase())
+                .unwrap_or(&TokenType::Id(word.to_string()))
+                .clone(),
+            current_index as u32,
+            word.len() as u32,
+            self.pos.shift(word.len() as u32),
+        )
     }
 
     fn number(&mut self) -> Token {
@@ -132,10 +198,16 @@ impl Lexer {
             || self.peek().is_none()
             || (self.peek().is_some() && !self.peek().unwrap().is_digit(10))
         {
-            return Token::IntegerConst(
-                self.source_code[current_index..self.index]
-                    .parse()
-                    .expect("integer parting error, should not happen!"),
+            let len = (self.index - current_index) as u32;
+            return Token::new(
+                TokenType::IntegerConst(
+                    self.source_code[current_index..self.index]
+                        .parse()
+                        .expect("integer parting error, should not happen!"),
+                ),
+                current_index as u32,
+                len,
+                self.pos.shift(len),
             );
         }
         self.advance();
@@ -144,10 +216,16 @@ impl Lexer {
         {
             self.advance();
         }
-        Token::RealConst(
-            self.source_code[current_index..self.index]
-                .parse()
-                .expect("float parsing error, should not happen!"),
+        let len = (self.index - current_index) as u32;
+        Token::new(
+            TokenType::RealConst(
+                self.source_code[current_index..self.index]
+                    .parse()
+                    .expect("float parsing error, should not happen!"),
+            ),
+            current_index as u32,
+            len,
+            self.pos.shift(len),
         )
     }
     fn string(&mut self) -> Token {
@@ -162,14 +240,25 @@ impl Lexer {
         let end_index = self.index;
         self.advance();
         if end_index - current_index == 1 {
-            return Token::CharConst(
-                self.source_code
-                    .chars()
-                    .nth(current_index)
-                    .expect("there should be a char"),
+            return Token::new(
+                TokenType::CharConst(
+                    self.source_code
+                        .chars()
+                        .nth(current_index)
+                        .expect("there should be a char"),
+                ),
+                current_index as u32,
+                1,
+                self.pos.shift(1),
             );
         }
-        Token::StringConst(self.source_code[current_index..end_index].to_string())
+        let len = (end_index - current_index) as u32;
+        Token::new(
+            TokenType::StringConst(self.source_code[current_index..end_index].to_string()),
+            current_index as u32,
+            len,
+            self.pos.shift(len),
+        )
     }
 
     pub fn current_char(&self) -> Option<char> {

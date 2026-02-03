@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::{
     error::Error,
     lexer::Lexer,
-    tokens::Token,
+    tokens::{Token, TokenType},
     utils::{NodePool, define_ref},
 };
 
@@ -17,7 +17,7 @@ pub enum Expr {
         name: String,
     },
     BinOp {
-        op: Token,
+        op: TokenType,
         left: ExprRef,
         right: ExprRef,
     },
@@ -27,7 +27,7 @@ pub enum Expr {
     LiteralChar(char),
     LiteralString(String),
     UnaryOp {
-        op: Token,
+        op: TokenType,
         expr: ExprRef,
     },
     Call {
@@ -144,16 +144,16 @@ pub enum Type {
     },
 }
 
-pub struct Parser {
-    lexer: Lexer,
+pub struct Parser<'a> {
+    lexer: Lexer<'a>,
     current_token: Token,
     expr_pool: NodePool<ExprRef, Expr>,
     stmt_pool: NodePool<StmtRef, Stmt>,
     type_pool: NodePool<TypeRef, Type>,
 }
 
-impl Parser {
-    pub fn new(mut lexer: Lexer) -> Result<Self, Error> {
+impl<'a> Parser<'a> {
+    pub fn new(mut lexer: Lexer<'a>) -> Result<Self, Error> {
         let token = lexer.next()?;
         Ok(Self {
             lexer,
@@ -164,9 +164,9 @@ impl Parser {
         })
     }
 
-    fn eat(&mut self, expected: Token) -> Result<Token, Error> {
+    fn eat(&mut self, expected: TokenType) -> Result<(), Error> {
         let token = self.current_token.clone();
-        if token != expected {
+        if token.token_type() != &expected {
             return Err(Error::ParserError {
                 msg: format!(
                     "expected token {:?}, got {:?}",
@@ -176,17 +176,17 @@ impl Parser {
             });
         }
         self.current_token = self.lexer.next()?;
-        Ok(token)
+        Ok(())
     }
 
     /// program:
     /// Program Id Semi block Dot
     fn program(&mut self) -> Result<Program, Error> {
-        self.eat(Token::Program)?;
+        self.eat(TokenType::Program)?;
         let var = self.id_str()?;
-        self.eat(Token::Semi)?;
+        self.eat(TokenType::Semi)?;
         let block = self.block()?;
-        self.eat(Token::Dot)?;
+        self.eat(TokenType::Dot)?;
         Ok(Program {
             name: var,
             block: block,
@@ -196,9 +196,9 @@ impl Parser {
     /// id:
     /// ID
     fn id(&mut self) -> Result<ExprRef, Error> {
-        if let Token::Id(id) = &self.current_token {
+        if let TokenType::Id(id) = &self.current_token.token_type() {
             let id = id.clone();
-            self.eat(Token::Id(id.clone()))?;
+            self.eat(TokenType::Id(id.clone()))?;
             return Ok(self.expr_pool.alloc(Expr::Var { name: id }));
         }
         Err(Error::ParserError {
@@ -208,7 +208,7 @@ impl Parser {
     }
 
     fn id_str(&mut self) -> Result<String, Error> {
-        if let Token::Id(id) = &self.current_token {
+        if let TokenType::Id(id) = &self.current_token.token_type() {
             let id = id.clone();
             self.current_token = self.lexer.next()?;
             return Ok(id);
@@ -241,39 +241,43 @@ impl Parser {
     fn declarations(&mut self) -> Result<Vec<Decl>, Error> {
         let mut decls = Vec::new();
         while matches!(
-            self.current_token,
-            Token::Const | Token::Type | Token::Var | Token::Function | Token::Procedure
+            self.current_token.token_type(),
+            TokenType::Const
+                | TokenType::Type
+                | TokenType::Var
+                | TokenType::Function
+                | TokenType::Procedure
         ) {
-            match self.current_token {
-                Token::Const => {
-                    self.eat(Token::Const)?;
+            match self.current_token.token_type() {
+                TokenType::Const => {
+                    self.eat(TokenType::Const)?;
                     decls.extend(self.const_declaration()?);
-                    self.eat(Token::Semi)?;
-                    while let Token::Id(_) = self.current_token {
+                    self.eat(TokenType::Semi)?;
+                    while let TokenType::Id(_) = self.current_token.token_type() {
                         decls.extend(self.const_declaration()?);
-                        self.eat(Token::Semi)?;
+                        self.eat(TokenType::Semi)?;
                     }
                 }
-                Token::Type => {
-                    self.eat(Token::Type)?;
+                TokenType::Type => {
+                    self.eat(TokenType::Type)?;
                     decls.extend(self.type_declaration()?);
-                    self.eat(Token::Semi)?;
-                    while let Token::Id(_) = self.current_token {
+                    self.eat(TokenType::Semi)?;
+                    while let TokenType::Id(_) = self.current_token.token_type() {
                         decls.extend(self.type_declaration()?);
-                        self.eat(Token::Semi)?;
+                        self.eat(TokenType::Semi)?;
                     }
                 }
-                Token::Var => {
-                    self.eat(Token::Var)?;
+                TokenType::Var => {
+                    self.eat(TokenType::Var)?;
                     decls.extend(self.var_declaration()?);
-                    self.eat(Token::Semi)?;
-                    while let Token::Id(_) = self.current_token {
+                    self.eat(TokenType::Semi)?;
+                    while let TokenType::Id(_) = self.current_token.token_type() {
                         decls.extend(self.var_declaration()?);
-                        self.eat(Token::Semi)?;
+                        self.eat(TokenType::Semi)?;
                     }
                 }
-                Token::Procedure => decls.push(self.procedure_declaration()?),
-                Token::Function => decls.push(self.function_declaration()?),
+                TokenType::Procedure => decls.push(self.procedure_declaration()?),
+                TokenType::Function => decls.push(self.function_declaration()?),
                 _ => unreachable!(),
             }
         }
@@ -284,22 +288,22 @@ impl Parser {
     /// Function id (LParen formal_parameter_list RParen)?
     /// Colon type_spec Semi block Semi
     fn function_declaration(&mut self) -> Result<Decl, Error> {
-        self.eat(Token::Function)?;
+        self.eat(TokenType::Function)?;
         let func_name = self.id_str()?;
-        let params = match self.current_token {
-            Token::LParen => {
-                self.eat(Token::LParen)?;
+        let params = match self.current_token.token_type() {
+            TokenType::LParen => {
+                self.eat(TokenType::LParen)?;
                 let params = self.formal_parameter_list()?;
-                self.eat(Token::RParen)?;
+                self.eat(TokenType::RParen)?;
                 params
             }
             _ => Vec::with_capacity(0),
         };
-        self.eat(Token::Colon)?;
+        self.eat(TokenType::Colon)?;
         let return_type = self.type_spec()?;
-        self.eat(Token::Semi)?;
+        self.eat(TokenType::Semi)?;
         let block = self.block()?;
-        self.eat(Token::Semi)?;
+        self.eat(TokenType::Semi)?;
         Ok(Decl::Callable {
             name: func_name,
             block,
@@ -312,15 +316,15 @@ impl Parser {
     /// Var id (Comma id)* Colon type_spec (Equal literal)?
     fn var_declaration(&mut self) -> Result<Vec<Decl>, Error> {
         let mut vars = vec![self.id()?];
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             vars.push(self.id()?);
         }
-        self.eat(Token::Colon)?;
+        self.eat(TokenType::Colon)?;
         let type_spec = self.type_spec()?;
-        let default_value = match self.current_token {
-            Token::Equal => {
-                self.eat(Token::Equal)?;
+        let default_value = match self.current_token.token_type() {
+            TokenType::Equal => {
+                self.eat(TokenType::Equal)?;
                 Some(self.literal()?)
             }
             _ => None,
@@ -338,19 +342,19 @@ impl Parser {
     /// procedure_declaration:
     /// Procedure id (LParen formal_parameter_list RParen)? Semi block Semi
     fn procedure_declaration(&mut self) -> Result<Decl, Error> {
-        self.eat(Token::Procedure)?;
+        self.eat(TokenType::Procedure)?;
         let proc_name = self.id_str()?;
-        let params = match self.current_token {
-            Token::LParen => {
-                self.eat(Token::LParen)?;
+        let params = match self.current_token.token_type() {
+            TokenType::LParen => {
+                self.eat(TokenType::LParen)?;
                 let params = self.formal_parameter_list()?;
-                self.eat(Token::RParen)?;
+                self.eat(TokenType::RParen)?;
                 params
             }
             _ => Vec::with_capacity(0),
         };
         let block = self.block()?;
-        self.eat(Token::Semi)?;
+        self.eat(TokenType::Semi)?;
         Ok(Decl::Callable {
             name: proc_name,
             block,
@@ -363,8 +367,8 @@ impl Parser {
     /// formal_parameters (Semi formal_parameter_list)?
     fn formal_parameter_list(&mut self) -> Result<Vec<Param>, Error> {
         let mut params = self.formal_parameters()?;
-        if let Token::Semi = self.current_token {
-            self.eat(Token::Semi)?;
+        if let TokenType::Semi = self.current_token.token_type() {
+            self.eat(TokenType::Semi)?;
             params.extend(self.formal_parameter_list()?);
         };
         Ok(params)
@@ -373,26 +377,26 @@ impl Parser {
     /// formal_parameters:
     /// Out? id (Comma Out? id)* Colon type_spec
     fn formal_parameters(&mut self) -> Result<Vec<Param>, Error> {
-        let out = match self.current_token {
-            Token::Out => {
-                self.eat(Token::Out)?;
+        let out = match self.current_token.token_type() {
+            TokenType::Out => {
+                self.eat(TokenType::Out)?;
                 true
             }
             _ => false,
         };
         let mut names = vec![(out, self.id()?)];
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
-            let out = match self.current_token {
-                Token::Out => {
-                    self.eat(Token::Out)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
+            let out = match self.current_token.token_type() {
+                TokenType::Out => {
+                    self.eat(TokenType::Out)?;
                     true
                 }
                 _ => false,
             };
             names.push((out, self.id()?));
         }
-        self.eat(Token::Colon)?;
+        self.eat(TokenType::Colon)?;
         let param_type = self.type_spec()?;
         Ok(names
             .iter()
@@ -408,11 +412,11 @@ impl Parser {
     /// Const id (Comma id)* Eq literal
     fn const_declaration(&mut self) -> Result<Vec<Decl>, Error> {
         let mut names = vec![self.id()?];
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             names.push(self.id()?);
         }
-        self.eat(Token::Equal)?;
+        self.eat(TokenType::Equal)?;
         let literal = self.literal()?;
         Ok(names
             .iter()
@@ -424,11 +428,11 @@ impl Parser {
     /// Type id (Comma id)* Equal type_spec
     fn type_declaration(&mut self) -> Result<Vec<Decl>, Error> {
         let mut names = vec![self.id()?];
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             names.push(self.id()?);
         }
-        self.eat(Token::Equal)?;
+        self.eat(TokenType::Equal)?;
         let type_decl = self.type_spec()?;
 
         Ok(names
@@ -446,34 +450,34 @@ impl Parser {
     /// array_spec |
     /// range_spec
     fn type_spec(&mut self) -> Result<TypeRef, Error> {
-        let token = self.current_token.clone();
+        let token = self.current_token.token_type().clone();
         match token {
-            Token::Id(v) => {
+            TokenType::Id(v) => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Alias(v)))
             }
-            Token::Integer => {
+            TokenType::Integer => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Integer))
             }
-            Token::Real => {
+            TokenType::Real => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Real))
             }
-            Token::Boolean => {
+            TokenType::Boolean => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Boolean))
             }
-            Token::String => {
+            TokenType::String => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::String))
             }
-            Token::Char => {
+            TokenType::Char => {
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Char))
             }
-            Token::LParen => self.enum_spec(),
-            Token::Array => self.array_spec(),
+            TokenType::LParen => self.enum_spec(),
+            TokenType::Array => self.array_spec(),
             _ => self.range_spec(),
         }
     }
@@ -481,32 +485,32 @@ impl Parser {
     /// enum_spec:
     /// LParan id (Comma id)* RParan
     fn enum_spec(&mut self) -> Result<TypeRef, Error> {
-        self.eat(Token::LParen)?;
+        self.eat(TokenType::LParen)?;
         let mut items = vec![self.id_str()?];
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             items.push(self.id_str()?);
         }
-        self.eat(Token::RParen)?;
+        self.eat(TokenType::RParen)?;
         Ok(self.type_pool.alloc(Type::Enum { items }))
     }
 
     /// array_spec:
     /// Array (LBrack range_spec RBrack)? Of type_spec
     fn array_spec(&mut self) -> Result<TypeRef, Error> {
-        self.eat(Token::Array)?;
-        if let Token::LBracket = self.current_token {
-            self.eat(Token::LBracket)?;
+        self.eat(TokenType::Array)?;
+        if let TokenType::LBracket = self.current_token.token_type() {
+            self.eat(TokenType::LBracket)?;
             let index_type = self.range_spec()?;
-            self.eat(Token::RBracket)?;
-            self.eat(Token::Of)?;
+            self.eat(TokenType::RBracket)?;
+            self.eat(TokenType::Of)?;
             let element_type = self.type_spec()?;
             return Ok(self.type_pool.alloc(Type::Array {
                 index_type,
                 element_type,
             }));
         };
-        self.eat(Token::Of)?;
+        self.eat(TokenType::Of)?;
         let element_type = self.type_spec()?;
         Ok(self.type_pool.alloc(Type::DynamicArray { element_type }))
     }
@@ -514,14 +518,14 @@ impl Parser {
     /// range_spec:
     /// (id | literal) Dot Dot (id | literal)
     fn range_spec(&mut self) -> Result<TypeRef, Error> {
-        let start = match self.current_token {
-            Token::Id(_) => self.id()?,
+        let start = match self.current_token.token_type() {
+            TokenType::Id(_) => self.id()?,
             _ => self.literal()?,
         };
-        self.eat(Token::Dot)?;
-        self.eat(Token::Dot)?;
-        let end = match self.current_token {
-            Token::Id(_) => self.id()?,
+        self.eat(TokenType::Dot)?;
+        self.eat(TokenType::Dot)?;
+        let end = match self.current_token.token_type() {
+            TokenType::Id(_) => self.id()?,
             _ => self.literal()?,
         };
         Ok(self.type_pool.alloc(Type::Range {
@@ -533,9 +537,9 @@ impl Parser {
     /// compound_statement:
     /// Begin statement_list End
     fn compound_statement(&mut self) -> Result<StmtRef, Error> {
-        self.eat(Token::Begin)?;
+        self.eat(TokenType::Begin)?;
         let statement_list = self.statement_list()?;
-        self.eat(Token::End)?;
+        self.eat(TokenType::End)?;
         Ok(self.stmt_pool.alloc(Stmt::Compound(statement_list)))
     }
 
@@ -543,8 +547,8 @@ impl Parser {
     /// statement (Semi statement)*
     fn statement_list(&mut self) -> Result<Vec<StmtRef>, Error> {
         let mut statements = vec![self.statement()?];
-        while let Token::Semi = self.current_token {
-            self.eat(Token::Semi)?;
+        while let TokenType::Semi = self.current_token.token_type() {
+            self.eat(TokenType::Semi)?;
             statements.push(self.statement()?);
         }
         Ok(statements)
@@ -562,24 +566,24 @@ impl Parser {
     /// exit_statement |
     /// NoOp
     fn statement(&mut self) -> Result<StmtRef, Error> {
-        match self.current_token {
-            Token::Continue => {
-                self.eat(Token::Continue)?;
+        match self.current_token.token_type() {
+            TokenType::Continue => {
+                self.eat(TokenType::Continue)?;
                 Ok(self.stmt_pool.alloc(Stmt::Continue))
             }
-            Token::Break => {
-                self.eat(Token::Break)?;
+            TokenType::Break => {
+                self.eat(TokenType::Break)?;
                 Ok(self.stmt_pool.alloc(Stmt::Break))
             }
-            Token::Begin => self.compound_statement(),
-            Token::Id(_) => match self.lexer.current_char() {
+            TokenType::Begin => self.compound_statement(),
+            TokenType::Id(_) => match self.lexer.current_char() {
                 Some('(') => self.call_statement(),
                 _ => self.assignment_statement(),
             },
-            Token::If => self.if_statement(),
-            Token::While => self.while_statement(),
-            Token::For => self.for_statement(),
-            Token::Exit => self.exit_statement(),
+            TokenType::If => self.if_statement(),
+            TokenType::While => self.while_statement(),
+            TokenType::For => self.for_statement(),
+            TokenType::Exit => self.exit_statement(),
             _ => Ok(self.stmt_pool.alloc(Stmt::NoOp)),
         }
     }
@@ -587,12 +591,12 @@ impl Parser {
     /// exit_statement:
     /// Exit (LParan exprt RParan)?
     fn exit_statement(&mut self) -> Result<StmtRef, Error> {
-        self.eat(Token::Exit)?;
+        self.eat(TokenType::Exit)?;
         let mut expr = None;
-        if let Token::LParen = self.current_token {
-            self.eat(Token::LParen)?;
+        if let TokenType::LParen = self.current_token.token_type() {
+            self.eat(TokenType::LParen)?;
             expr = Some(self.expr()?);
-            self.eat(Token::RParen)?;
+            self.eat(TokenType::RParen)?;
         };
         Ok(self.stmt_pool.alloc(Stmt::Exit(expr)))
     }
@@ -600,13 +604,13 @@ impl Parser {
     /// for_statement:
     /// For id Assign expr To expr Do statement
     fn for_statement(&mut self) -> Result<StmtRef, Error> {
-        self.eat(Token::For)?;
+        self.eat(TokenType::For)?;
         let var = self.id_str()?;
-        self.eat(Token::Assign)?;
+        self.eat(TokenType::Assign)?;
         let init_state = self.expr()?;
-        self.eat(Token::To)?;
+        self.eat(TokenType::To)?;
         let end_state = self.expr()?;
-        self.eat(Token::Do)?;
+        self.eat(TokenType::Do)?;
         let expr = self.statement()?;
         Ok(self.stmt_pool.alloc(Stmt::For {
             var,
@@ -619,9 +623,9 @@ impl Parser {
     /// while_statement:
     /// While expr Do statement
     fn while_statement(&mut self) -> Result<StmtRef, Error> {
-        self.eat(Token::While)?;
+        self.eat(TokenType::While)?;
         let cond = self.expr()?;
-        self.eat(Token::Do)?;
+        self.eat(TokenType::Do)?;
         let body = self.statement()?;
         Ok(self.stmt_pool.alloc(Stmt::While { cond, body }))
     }
@@ -631,15 +635,15 @@ impl Parser {
     /// (Else If condition)*
     /// (Else statement)?
     fn if_statement(&mut self) -> Result<StmtRef, Error> {
-        self.eat(Token::If)?;
+        self.eat(TokenType::If)?;
         let main_cond = self.condition()?;
         let mut other_conditions = Vec::new();
         let mut last_conditition = None;
-        while let Token::Else = self.current_token {
-            self.eat(Token::Else)?;
-            match self.current_token {
-                Token::If => {
-                    self.eat(Token::If)?;
+        while let TokenType::Else = self.current_token.token_type() {
+            self.eat(TokenType::Else)?;
+            match self.current_token.token_type() {
+                TokenType::If => {
+                    self.eat(TokenType::If)?;
                     other_conditions.push(self.condition()?);
                 }
                 _ => {
@@ -659,7 +663,7 @@ impl Parser {
     /// expr Then statement
     fn condition(&mut self) -> Result<Condition, Error> {
         let cond = self.expr()?;
-        self.eat(Token::Then)?;
+        self.eat(TokenType::Then)?;
         let expr = self.statement()?;
         Ok(Condition { cond, expr })
     }
@@ -671,7 +675,7 @@ impl Parser {
             Some('[') => self.index_of_statement()?,
             _ => self.id()?,
         };
-        self.eat(Token::Assign)?;
+        self.eat(TokenType::Assign)?;
         let expr = self.expr()?;
         Ok(self.stmt_pool.alloc(Stmt::Assign {
             left: var,
@@ -683,11 +687,11 @@ impl Parser {
     /// bool_expr (OR bool_expr)*
     fn expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.bool_expr()?;
-        while let Token::Or = self.current_token {
-            self.eat(Token::Or)?;
+        while let TokenType::Or = self.current_token.token_type() {
+            self.eat(TokenType::Or)?;
             let right = self.bool_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
-                op: Token::Or,
+                op: TokenType::Or,
                 left: node,
                 right,
             });
@@ -699,11 +703,11 @@ impl Parser {
     /// compare_expr (AND compare_expr)*
     fn bool_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.compare_expr()?;
-        while let Token::And = self.current_token {
-            self.eat(Token::And)?;
+        while let TokenType::And = self.current_token.token_type() {
+            self.eat(TokenType::And)?;
             let right = self.compare_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
-                op: Token::And,
+                op: TokenType::And,
                 left: node,
                 right,
             });
@@ -715,8 +719,8 @@ impl Parser {
     /// add_expr (compare_token add_expr)*
     fn compare_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.add_expr()?;
-        while self.current_token.is_compare_operator() {
-            let token = self.current_token.clone();
+        while self.current_token.token_type().is_compare_operator() {
+            let token = self.current_token.token_type().clone();
             self.current_token = self.lexer.next()?;
             let right = self.add_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -732,8 +736,11 @@ impl Parser {
     /// mult_expr ((Minus | Plus) mult_expr)*
     fn add_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.mult_expr()?;
-        while matches!(self.current_token, Token::Plus | Token::Minus) {
-            let token = self.current_token.clone();
+        while matches!(
+            self.current_token.token_type(),
+            TokenType::Plus | TokenType::Minus
+        ) {
+            let token = self.current_token.token_type().clone();
             self.current_token = self.lexer.next()?;
             let right = self.mult_expr()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -750,10 +757,10 @@ impl Parser {
     fn mult_expr(&mut self) -> Result<ExprRef, Error> {
         let mut node = self.factor()?;
         while matches!(
-            self.current_token,
-            Token::Mul | Token::RealDiv | Token::IntegerDiv
+            self.current_token.token_type(),
+            TokenType::Mul | TokenType::RealDiv | TokenType::IntegerDiv
         ) {
-            let token = self.current_token.clone();
+            let token = self.current_token.token_type().clone();
             self.current_token = self.lexer.next()?;
             let right = self.factor()?;
             node = self.expr_pool.alloc(Expr::BinOp {
@@ -774,9 +781,9 @@ impl Parser {
     /// index_of_statement |
     /// variable
     fn factor(&mut self) -> Result<ExprRef, Error> {
-        match self.current_token {
-            Token::Plus | Token::Minus => {
-                let token = self.current_token.clone();
+        match self.current_token.token_type() {
+            TokenType::Plus | TokenType::Minus => {
+                let token = self.current_token.token_type().clone();
                 self.current_token = self.lexer.next()?;
                 let factor = self.factor()?;
                 return Ok(self.expr_pool.alloc(Expr::UnaryOp {
@@ -784,26 +791,26 @@ impl Parser {
                     expr: factor,
                 }));
             }
-            Token::Not => {
-                self.eat(Token::Not)?;
+            TokenType::Not => {
+                self.eat(TokenType::Not)?;
                 let expr = self.compare_expr()?;
                 return Ok(self.expr_pool.alloc(Expr::UnaryOp {
-                    op: Token::Not,
+                    op: TokenType::Not,
                     expr,
                 }));
             }
-            Token::IntegerConst(_)
-            | Token::RealConst(_)
-            | Token::BooleanConst(_)
-            | Token::StringConst(_)
-            | Token::CharConst(_) => self.literal(),
-            Token::LParen => {
-                self.eat(Token::LParen)?;
+            TokenType::IntegerConst(_)
+            | TokenType::RealConst(_)
+            | TokenType::BooleanConst(_)
+            | TokenType::StringConst(_)
+            | TokenType::CharConst(_) => self.literal(),
+            TokenType::LParen => {
+                self.eat(TokenType::LParen)?;
                 let expr = self.expr();
-                self.eat(Token::RParen)?;
+                self.eat(TokenType::RParen)?;
                 return expr;
             }
-            Token::Id(_) => match self.lexer.current_char() {
+            TokenType::Id(_) => match self.lexer.current_char() {
                 Some('(') => self.call_expr(),
                 Some('[') => self.index_of_statement(),
                 _ => self.id(),
@@ -819,16 +826,16 @@ impl Parser {
     /// Id LParan expr (Comma expr)* RParan
     fn call_expr(&mut self) -> Result<ExprRef, Error> {
         let proc_name = self.id_str()?;
-        self.eat(Token::LParen)?;
+        self.eat(TokenType::LParen)?;
         let mut params = Vec::new();
-        if self.current_token != Token::RParen {
+        if self.current_token.token_type() != &TokenType::RParen {
             params.push(self.expr()?);
         }
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             params.push(self.expr()?);
         }
-        self.eat(Token::RParen)?;
+        self.eat(TokenType::RParen)?;
         Ok(self.expr_pool.alloc(Expr::Call {
             name: proc_name,
             args: params,
@@ -846,14 +853,14 @@ impl Parser {
     /// id LBracket expr (Comma expr)* RBracket
     fn index_of_statement(&mut self) -> Result<ExprRef, Error> {
         let var_node = self.id()?;
-        self.eat(Token::LBracket)?;
+        self.eat(TokenType::LBracket)?;
         let expr = self.expr()?;
         let mut other_indicies = Vec::new();
-        while let Token::Comma = self.current_token {
-            self.eat(Token::Comma)?;
+        while let TokenType::Comma = *self.current_token.token_type() {
+            self.eat(TokenType::Comma)?;
             other_indicies.push(self.expr()?);
         }
-        self.eat(Token::RBracket)?;
+        self.eat(TokenType::RBracket)?;
         Ok(self.expr_pool.alloc(Expr::Index {
             base: var_node,
             index_value: expr,
@@ -862,14 +869,14 @@ impl Parser {
     }
 
     fn literal(&mut self) -> Result<ExprRef, Error> {
-        let token = self.current_token.clone();
+        let token = self.current_token.token_type().clone();
         self.current_token = self.lexer.next()?;
         match token {
-            Token::IntegerConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralInteger(v))),
-            Token::RealConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralReal(v))),
-            Token::StringConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralString(v))),
-            Token::CharConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralChar(v))),
-            Token::BooleanConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralBool(v))),
+            TokenType::IntegerConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralInteger(v))),
+            TokenType::RealConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralReal(v))),
+            TokenType::StringConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralString(v))),
+            TokenType::CharConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralChar(v))),
+            TokenType::BooleanConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralBool(v))),
             _ => Err(Error::ParserError {
                 msg: format!("unkown literal {:?}", token),
                 error_code: None,

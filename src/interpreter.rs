@@ -11,7 +11,7 @@ use crate::{
     parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
     symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
-    tokens::Token,
+    tokens::TokenType,
     utils::NodePool,
 };
 
@@ -407,7 +407,6 @@ impl Interpreter {
                         }
                     }
                     i += 1;
-                    println!("{}", i);
                     self.call_stack
                         .write(&LValue::Ref { name: var }, type_symbol.oridnal_value(i)?)?;
                 }
@@ -468,11 +467,11 @@ impl Interpreter {
             }
             Expr::UnaryOp { op, expr } => {
                 match (op, self.visit_expr(*expr, tree, semantic_metadata)?) {
-                    (Token::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
-                    (Token::Minus, Value::Integer(v)) => Ok(Value::Integer(-v)),
-                    (Token::Minus, Value::Real(v)) => Ok(Value::Real(-v)),
-                    (Token::Plus, Value::Integer(v)) => Ok(Value::Integer(v)),
-                    (Token::Plus, Value::Real(v)) => Ok(Value::Real(v)),
+                    (TokenType::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
+                    (TokenType::Minus, Value::Integer(v)) => Ok(Value::Integer(-v)),
+                    (TokenType::Minus, Value::Real(v)) => Ok(Value::Real(-v)),
+                    (TokenType::Plus, Value::Integer(v)) => Ok(Value::Integer(v)),
+                    (TokenType::Plus, Value::Real(v)) => Ok(Value::Real(v)),
                     _ => panic!("unreachable"),
                 }
             }
@@ -708,9 +707,9 @@ impl Interpreter {
     }
 }
 
-fn bin_op(op: &Token, v_l: Value, v_r: Value) -> Value {
+fn bin_op(op: &TokenType, v_l: Value, v_r: Value) -> Value {
     match op {
-        Token::Plus => match (v_l, v_r) {
+        TokenType::Plus => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l + v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 + v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l + v_r as f64),
@@ -719,66 +718,66 @@ fn bin_op(op: &Token, v_l: Value, v_r: Value) -> Value {
             (Value::String(v_l), Value::Char(v_r)) => Value::String(v_l + &v_r.to_string()),
             _ => panic!("unreachable"),
         },
-        Token::Minus => match (v_l, v_r) {
+        TokenType::Minus => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l - v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 - v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l - v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
             _ => panic!("unreachable"),
         },
-        Token::Mul => match (v_l, v_r) {
+        TokenType::Mul => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l * v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 * v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l * v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l * v_r),
             _ => panic!("unreachable"),
         },
-        Token::RealDiv => match (v_l, v_r) {
+        TokenType::RealDiv => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Real(v_l as f64 / v_r as f64),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 / v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l / v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l / v_r),
             _ => panic!("unreachable"),
         },
-        Token::IntegerDiv => match (v_l, v_r) {
+        TokenType::IntegerDiv => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l / v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => {
                 Value::Integer((v_l / v_r as f64).floor() as i64)
             }
             _ => panic!("Unreachable"),
         },
-        Token::Equal => Value::Boolean(v_l == v_r),
-        Token::NotEqual => Value::Boolean(v_l != v_r),
-        Token::And => match (v_l, v_r) {
+        TokenType::Equal => Value::Boolean(v_l == v_r),
+        TokenType::NotEqual => Value::Boolean(v_l != v_r),
+        TokenType::And => match (v_l, v_r) {
             (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l && v_r),
             _ => panic!("unreachable"),
         },
-        Token::Or => match (v_l, v_r) {
+        TokenType::Or => match (v_l, v_r) {
             (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l || v_r),
             _ => panic!("unreachable"),
         },
-        Token::GreaterThen => match (v_l, v_r) {
+        TokenType::GreaterThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean(v_l as f64 > v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l > v_r),
             _ => panic!("unreachable"),
         },
-        Token::LessThen => match (v_l, v_r) {
+        TokenType::LessThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) < v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l < v_r),
             _ => panic!("unreachable"),
         },
-        Token::GreaterEqual => match (v_l, v_r) {
+        TokenType::GreaterEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) >= v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l >= v_r),
             _ => panic!("unreachable"),
         },
-        Token::LessEqual => match (v_l, v_r) {
+        TokenType::LessEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) <= v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r as f64),

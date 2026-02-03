@@ -9,7 +9,7 @@ use crate::{
         CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
         TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
-    tokens::Token,
+    tokens::TokenType,
     utils::NodePool,
 };
 
@@ -265,21 +265,23 @@ impl SemanticAnalyzer {
                 let left_type = self.visit_expr(*left, tree)?;
                 let right_type = self.visit_expr(*right, tree)?;
                 let type_symbol = match op {
-                    Token::Minus | Token::RealDiv | Token::Mul => match (&left_type, &right_type) {
-                        (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
-                        (
-                            TypeSymbol::Real | TypeSymbol::Integer,
-                            TypeSymbol::Real | TypeSymbol::Integer,
-                        ) => Ok(TypeSymbol::Real),
-                        _ => Err(Error::SemanticError {
-                            msg: format!(
-                                "operator {:?} is not supported for {:?} and {:?}",
-                                op, left_type, right_type
-                            ),
-                            error_code: None,
-                        }),
-                    },
-                    Token::IntegerDiv => match (&left_type, &right_type) {
+                    TokenType::Minus | TokenType::RealDiv | TokenType::Mul => {
+                        match (&left_type, &right_type) {
+                            (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
+                            (
+                                TypeSymbol::Real | TypeSymbol::Integer,
+                                TypeSymbol::Real | TypeSymbol::Integer,
+                            ) => Ok(TypeSymbol::Real),
+                            _ => Err(Error::SemanticError {
+                                msg: format!(
+                                    "operator {:?} is not supported for {:?} and {:?}",
+                                    op, left_type, right_type
+                                ),
+                                error_code: None,
+                            }),
+                        }
+                    }
+                    TokenType::IntegerDiv => match (&left_type, &right_type) {
                         (TypeSymbol::Integer | TypeSymbol::Real, TypeSymbol::Integer) => {
                             Ok(TypeSymbol::Integer)
                         }
@@ -291,7 +293,7 @@ impl SemanticAnalyzer {
                             error_code: None,
                         }),
                     },
-                    Token::Plus => match (&left_type, &right_type) {
+                    TokenType::Plus => match (&left_type, &right_type) {
                         (TypeSymbol::String, TypeSymbol::String | TypeSymbol::Char) => {
                             Ok(TypeSymbol::String)
                         }
@@ -308,10 +310,10 @@ impl SemanticAnalyzer {
                             error_code: None,
                         }),
                     },
-                    Token::GreaterThen
-                    | Token::GreaterEqual
-                    | Token::LessEqual
-                    | Token::LessThen => match (left_type, right_type) {
+                    TokenType::GreaterThen
+                    | TokenType::GreaterEqual
+                    | TokenType::LessEqual
+                    | TokenType::LessThen => match (left_type, right_type) {
                         (
                             TypeSymbol::Integer | TypeSymbol::Real,
                             TypeSymbol::Integer | TypeSymbol::Real,
@@ -323,8 +325,8 @@ impl SemanticAnalyzer {
                             error_code: None,
                         }),
                     },
-                    Token::Equal | Token::NotEqual => Ok(TypeSymbol::Boolean),
-                    Token::And | Token::Or => match (left_type, right_type) {
+                    TokenType::Equal | TokenType::NotEqual => Ok(TypeSymbol::Boolean),
+                    TokenType::And | TokenType::Or => match (left_type, right_type) {
                         (TypeSymbol::Boolean, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                         _ => Err(Error::SemanticError {
                             msg: format!("operator AND and OR are only supported for booleans"),
@@ -341,9 +343,11 @@ impl SemanticAnalyzer {
             Expr::UnaryOp { op, expr: expr_ref } => {
                 let expr_type = self.visit_expr(*expr_ref, tree)?;
                 let type_symbol = match (op, expr_type) {
-                    (Token::Not, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
-                    (Token::Minus | Token::Plus, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
-                    (Token::Minus | Token::Plus, TypeSymbol::Real) => Ok(TypeSymbol::Real),
+                    (TokenType::Not, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
+                    (TokenType::Minus | TokenType::Plus, TypeSymbol::Integer) => {
+                        Ok(TypeSymbol::Integer)
+                    }
+                    (TokenType::Minus | TokenType::Plus, TypeSymbol::Real) => Ok(TypeSymbol::Real),
                     (_, _) => Err(Error::SemanticError {
                         msg: "unary operator is not applicable here".to_string(),
                         error_code: None,

@@ -1,5 +1,19 @@
 use std::marker::PhantomData;
 
+#[derive(Debug, Clone, Copy)]
+pub struct Pos {
+    pub row: u32,
+    pub col: u32,
+}
+
+impl Pos {
+    pub fn shift(&self, amount: u32) -> Self {
+        Self {
+            row: self.row,
+            col: self.col - amount,
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub struct NodePool<Ref, T> {
     items: Vec<T>,
