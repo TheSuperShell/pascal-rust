@@ -1,15 +1,32 @@
 use std::fmt::Display;
 
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     lexer::Lexer,
-    tokens::{Token, TokenType},
-    utils::{NodePool, define_ref},
+    tokens::{Span, Token, TokenType},
+    utils::{NodePool, Pos, define_ref},
 };
 
 define_ref!(ExprRef);
 define_ref!(StmtRef);
 define_ref!(TypeRef);
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct AST<Node> {
+    node: Node,
+    pos: Pos,
+    span: Span,
+}
+
+impl<Node> PartialEq for AST<Node>
+where
+    Node: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -168,7 +185,8 @@ impl<'a> Parser<'a> {
                     "expected token {:?}, got {:?}",
                     expected, self.current_token
                 ),
-                error_code: None,
+                pos: token.pos(),
+                error_code: ErrorCode::UnexpectedToken,
             });
         }
         self.current_token = self.lexer.next()?;
@@ -199,7 +217,8 @@ impl<'a> Parser<'a> {
         }
         Err(Error::ParserError {
             msg: format!("expected id, got {:?}", self.current_token),
-            error_code: None,
+            pos: self.current_token.pos(),
+            error_code: ErrorCode::UnexpectedToken,
         })
     }
 
@@ -211,7 +230,8 @@ impl<'a> Parser<'a> {
         }
         Err(Error::ParserError {
             msg: format!("expected id, got {:?}", self.current_token),
-            error_code: None,
+            pos: self.current_token.pos(),
+            error_code: ErrorCode::UnexpectedToken,
         })
     }
 
@@ -814,7 +834,8 @@ impl<'a> Parser<'a> {
             },
             _ => Err(Error::ParserError {
                 msg: format!("unexpected factor {:?}", self.current_token),
-                error_code: None,
+                pos: self.current_token.pos(),
+                error_code: ErrorCode::UnexpectedToken,
             }),
         }
     }
@@ -878,7 +899,8 @@ impl<'a> Parser<'a> {
             TokenType::BooleanConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralBool(v))),
             _ => Err(Error::ParserError {
                 msg: format!("unkown literal {:?}", token),
-                error_code: None,
+                pos: self.current_token.pos(),
+                error_code: ErrorCode::UnkownLiteral,
             }),
         }
     }

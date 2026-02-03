@@ -1,24 +1,35 @@
+use err_code::ErrorCode;
+
 use crate::utils::Pos;
 
-#[derive(Debug)]
-pub enum ErrorCode {}
+#[derive(ErrorCode, Debug)]
+pub enum ErrorCode {
+    #[error_code(100)]
+    UnkownCharacter,
+
+    #[error_code(201)]
+    UnexpectedToken,
+    #[error_code(202)]
+    UnkownLiteral,
+}
 
 #[derive(Debug)]
 pub enum Error {
     LexerError {
         msg: String,
         pos: Pos,
-        error_code: Option<ErrorCode>,
+        error_code: ErrorCode,
     },
     ParserError {
         msg: String,
-        error_code: Option<ErrorCode>,
+        pos: Pos,
+        error_code: ErrorCode,
     },
     SemanticError {
         msg: String,
         error_code: Option<ErrorCode>,
     },
-    InterpreterError {
+    RuntimeError {
         msg: String,
     },
 }
@@ -33,18 +44,34 @@ impl std::fmt::Display for Error {
             } => {
                 write!(
                     f,
-                    "Lexer Error at row {} col {} ({:?}): {}",
-                    pos.row, pos.col, error_code, msg
+                    "Lexer Error at row {} col {} ({}: {:?}): {}",
+                    pos.row,
+                    pos.col,
+                    error_code.error_code(),
+                    error_code,
+                    msg
                 )
             }
-            Error::ParserError { msg, error_code } => {
-                write!(f, "Parser Error {:?}: {}", error_code, msg)
+            Error::ParserError {
+                msg,
+                pos,
+                error_code,
+            } => {
+                write!(
+                    f,
+                    "Parser Error at row {} col {} ({}: {:?}): {}",
+                    pos.row,
+                    pos.col,
+                    error_code.error_code(),
+                    error_code,
+                    msg
+                )
             }
             Error::SemanticError { msg, error_code } => {
                 write!(f, "Semantic Error {:?}: {}", error_code, msg)
             }
-            Error::InterpreterError { msg } => {
-                write!(f, "Interpreter Error: {}", msg)
+            Error::RuntimeError { msg } => {
+                write!(f, "Runtime Error: {}", msg)
             }
         }
     }

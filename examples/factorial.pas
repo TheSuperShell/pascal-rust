@@ -12,7 +12,7 @@ program factorial;
         c := a + b;
         result := 'hello'
     end;
-    var c: string;
+    var 2: string;
     var arr: array[0..100] of integer;
     a, b: boolean = true;
     i: integer;

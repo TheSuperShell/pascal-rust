@@ -37,7 +37,7 @@ impl TypeSymbol {
             TypeSymbol::Integer => Ok(Value::Integer(index)),
             TypeSymbol::Char => Ok(Value::Char(char::from_u32(index as u32).unwrap())),
             TypeSymbol::Boolean => Ok(Value::Boolean(index != 0)),
-            _ => Err(Error::InterpreterError {
+            _ => Err(Error::RuntimeError {
                 msg: format!("ordinal value is not supported for {:?}", self),
             }),
         }

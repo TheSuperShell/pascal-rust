@@ -1,5 +1,5 @@
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     tokens::{Token, TokenType},
     utils::Pos,
 };
@@ -163,7 +163,7 @@ impl<'a> Lexer<'a> {
             _ => Err(Error::LexerError {
                 msg: format!("unexpected character {:?}", self.current_char),
                 pos: self.pos,
-                error_code: None,
+                error_code: ErrorCode::UnkownCharacter,
             }),
         }
     }

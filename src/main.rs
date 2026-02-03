@@ -14,7 +14,14 @@ use crate::{
     error::Error, interpreter::Interpreter, parser::Parser, semantic_analyzer::SemanticAnalyzer,
 };
 
-fn main() -> Result<(), Error> {
+fn main() {
+    match interprete() {
+        Err(e) => println!("{e}"),
+        _ => (),
+    }
+}
+
+fn interprete() -> Result<(), Error> {
     let source_code = std::fs::read_to_string("examples/factorial.pas").expect("file should exist");
     let lexer = Lexer::new(&source_code);
     let parser = Parser::new(lexer)?;

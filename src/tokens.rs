@@ -17,7 +17,6 @@ impl Span {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Token {
     token_type: TokenType,
     span: Span,
@@ -39,6 +38,10 @@ impl Token {
 
     pub fn lexem<'a>(&self, src: &'a str) -> &'a str {
         self.span.lexem(src)
+    }
+
+    pub fn pos(&self) -> Pos {
+        self.pos
     }
 }
 

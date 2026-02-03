@@ -20,7 +20,7 @@ fn writeln(
                 println!("{}", v.to_string());
                 Ok(())
             }
-            _ => Err(Error::InterpreterError {
+            _ => Err(Error::RuntimeError {
                 msg: "unexpected".into(),
             }),
         })

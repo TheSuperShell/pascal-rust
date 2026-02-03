@@ -40,7 +40,7 @@ impl Value {
             Value::Integer(i) => Ok(*i),
             Value::Char(c) => Ok(*c as i64),
             Value::Boolean(b) => Ok(*b as i64),
-            _ => Err(Error::InterpreterError {
+            _ => Err(Error::RuntimeError {
                 msg: format!("ordinal rank is not supported for {:?}", self),
             }),
         }
@@ -194,19 +194,19 @@ impl BuiltinCtx for CallStack {
     fn read<'a>(&'a self, builtin_input: &'a LValue) -> Result<&'a Self::Value, Error> {
         match builtin_input {
             LValue::Value(v) => Ok(v),
-            LValue::Ref { name } => self.lookup_value(name).ok_or(Error::InterpreterError {
+            LValue::Ref { name } => self.lookup_value(name).ok_or(Error::RuntimeError {
                 msg: "name was not found".into(),
             }),
             LValue::ArrIndex { name, index } => self
                 .lookup_value(name)
-                .ok_or(Error::InterpreterError {
+                .ok_or(Error::RuntimeError {
                     msg: "name was not found".into(),
                 })
                 .and_then(|v| match v {
-                    Value::Array(a) => a[*index].as_deref().ok_or(Error::InterpreterError {
+                    Value::Array(a) => a[*index].as_deref().ok_or(Error::RuntimeError {
                         msg: "value is None".into(),
                     }),
-                    _ => Err(Error::InterpreterError {
+                    _ => Err(Error::RuntimeError {
                         msg: "value should be array".into(),
                     }),
                 }),
@@ -215,12 +215,12 @@ impl BuiltinCtx for CallStack {
 
     fn write(&mut self, builtin_input: &LValue, value: Self::Value) -> Result<(), Error> {
         match builtin_input {
-            LValue::Value(_) => Err(Error::InterpreterError {
+            LValue::Value(_) => Err(Error::RuntimeError {
                 msg: "cannot write to a value".into(),
             }),
             LValue::Ref { name } => {
                 self.lookup_mut(name)
-                    .ok_or(Error::InterpreterError {
+                    .ok_or(Error::RuntimeError {
                         msg: "name not found".into(),
                     })?
                     .set(value);
@@ -228,11 +228,11 @@ impl BuiltinCtx for CallStack {
             }
             LValue::ArrIndex { name, index } => self
                 .lookup_mut(name)
-                .ok_or(Error::InterpreterError {
+                .ok_or(Error::RuntimeError {
                     msg: "name not found".into(),
                 })?
                 .get_mut()
-                .ok_or(Error::InterpreterError {
+                .ok_or(Error::RuntimeError {
                     msg: "var is not defined".into(),
                 })
                 .map(|v| match v {
@@ -240,7 +240,7 @@ impl BuiltinCtx for CallStack {
                         a[*index] = Some(Box::new(value));
                         Ok(())
                     }
-                    _ => Err(Error::InterpreterError {
+                    _ => Err(Error::RuntimeError {
                         msg: "var is not array".into(),
                     }),
                 })?,
@@ -475,7 +475,7 @@ impl Interpreter {
                         .peek()
                         .get_value(name)
                         .map(|v| v.clone())
-                        .ok_or(Error::InterpreterError {
+                        .ok_or(Error::RuntimeError {
                             msg: format!("undefined var {}", name),
                         }),
                     VarSymbol::Const { value } => Ok(value.clone().into()),
@@ -529,7 +529,7 @@ impl Interpreter {
             Expr::Call { name, args } => {
                 match self.visit_callable(&expr, name, args, tree, semantic_metadata)? {
                     Some(v) => Ok(v),
-                    None => Err(Error::InterpreterError {
+                    None => Err(Error::RuntimeError {
                         msg: "function returned none".to_string(),
                     }),
                 }
