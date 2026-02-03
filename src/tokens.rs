@@ -17,6 +17,7 @@ impl Span {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct Token {
     token_type: TokenType,
     span: Span,

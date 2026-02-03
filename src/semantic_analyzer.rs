@@ -255,7 +255,7 @@ impl SemanticAnalyzer {
                     VarSymbol::Var {
                         name: _,
                         type_symbol,
-                    } => self.semantic_metadata.types.get(*type_symbol).clone(),
+                    } => return Ok(*type_symbol),
                     VarSymbol::Const { value } => match value {
                         ConstValue::Integer(_) => TypeSymbol::Integer,
                         ConstValue::Boolean(_) => TypeSymbol::Boolean,
@@ -364,13 +364,12 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::Call { name, args } => {
-                let type_ref =
-                    self.visit_callable(&node, tree, name, args)?
-                        .ok_or(Error::SemanticError {
-                            msg: "procedure cannot be used in an expression".to_string(),
-                            error_code: None,
-                        })?;
-                Ok(self.semantic_metadata.types.get(type_ref).clone())
+                return self
+                    .visit_callable(&node, tree, name, args)?
+                    .ok_or(Error::SemanticError {
+                        msg: "procedure cannot be used in an expression".to_string(),
+                        error_code: None,
+                    });
             }
             Expr::Index {
                 base,
@@ -415,16 +414,16 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
-                let base_type = self.semantic_metadata.types.get(*base_type_ref);
-                Ok(base_type.clone())
+                return Ok(*base_type_ref);
             }
         }?;
-        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol.clone());
+        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
         self.semantic_metadata
             .expr_type_map
             .insert(node, type_symbol_ref);
         Ok(type_symbol_ref)
     }
+
     fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let type_symbol = match tree.type_pool.get(node) {
             Type::Integer => Ok(TypeSymbol::Integer),
