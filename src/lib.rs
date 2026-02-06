@@ -8,14 +8,16 @@ mod symbols;
 mod tokens;
 mod utils;
 
+use std::path::Path;
+
 use lexer::Lexer;
 
 use crate::{
     error::Error, interpreter::Interpreter, parser::Parser, semantic_analyzer::SemanticAnalyzer,
 };
 
-pub fn interprete() -> Result<(), Error> {
-    let source_code = std::fs::read_to_string("examples/factorial.pas").expect("file should exist");
+pub fn interprete<P: AsRef<Path>>(path: P) -> Result<(), Error> {
+    let source_code = std::fs::read_to_string(path).expect("file should exist");
     let lexer = Lexer::new(&source_code);
     let parser = Parser::new(lexer)?;
     let tree = parser.parse()?;

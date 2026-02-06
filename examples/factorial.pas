@@ -5,10 +5,8 @@ program fib;
             exit(val);
         exit(fib(val - 1) + fib(val - 2));
     end;
-    var i: char = 'a';
-    var arr: array['a'..'z'] of char;
+    var i: integer;
 begin
-    for i := 'a' to 'z' do
-        arr[i] := i;
-    writeln(arr)
+    for i := 0 to 25 do
+        writeln(fib(i));
 end.
