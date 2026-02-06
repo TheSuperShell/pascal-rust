@@ -55,11 +55,19 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.current_char {
             if c == '}' {
                 self.advance();
-                self.trim_whitespace();
                 break;
             }
             self.advance();
         }
+    }
+
+    fn single_line_comment(&mut self) {
+        while let Some(c) = self.current_char
+            && c != '\n'
+        {
+            self.advance();
+        }
+        self.advance();
     }
 
     pub fn peek(&self) -> Option<char> {
@@ -71,10 +79,16 @@ impl<'a> Lexer<'a> {
 
     pub fn next(&mut self) -> Result<Token, Error> {
         self.trim_whitespace();
-        while let Some(c) = self.current_char
-            && c == '{'
-        {
-            self.comment();
+        loop {
+            match (self.current_char, self.peek()) {
+                (Some('{'), Some(_)) => self.comment(),
+                (Some('\\'), Some('\\')) => self.single_line_comment(),
+                _ => {
+                    self.trim_whitespace();
+                    break;
+                }
+            }
+            self.trim_whitespace();
         }
         match self.current_char {
             None => Ok(Token::new(
@@ -267,5 +281,37 @@ impl<'a> Lexer<'a> {
 
     pub fn source_code(&self) -> &'a str {
         self.source_code
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lexer() {
+        const SOURCE_CODE: &'static str = "PROGRAM IN FOR 1.3212; { some comment }{another one}  'c' \\\\ other type of comments FOR i := 10\n 'hello'\n;;. >= : :=";
+        let expected = [
+            TokenType::Program,
+            TokenType::In,
+            TokenType::For,
+            TokenType::RealConst(1.3212),
+            TokenType::Semi,
+            TokenType::CharConst('c'),
+            TokenType::StringConst,
+            TokenType::Semi,
+            TokenType::Semi,
+            TokenType::Dot,
+            TokenType::GreaterEqual,
+            TokenType::Colon,
+            TokenType::Assign,
+        ];
+        let mut lexer = Lexer::new(SOURCE_CODE);
+        for e in expected {
+            let result = lexer.next();
+            assert!(result.is_ok());
+            let token_type = result.unwrap();
+            assert_eq!(token_type.token_type(), &e);
+        }
     }
 }
