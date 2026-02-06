@@ -4,7 +4,7 @@ use crate::{
     error::{Error, ErrorCode},
     lexer::Lexer,
     tokens::{Token, TokenType},
-    utils::{NodePoolWithSpan, Span, define_ref},
+    utils::{NodePoolWithSpan, Pos, Span, define_ref},
 };
 
 define_ref!(ExprRef);
@@ -993,6 +993,12 @@ impl<'a> Parser<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub enum NodeRef {
+    ExprRef(ExprRef),
+    StmtRef(StmtRef),
+    TypeRef(TypeRef),
+}
+#[derive(Debug, Clone)]
 pub struct Tree<'a> {
     pub source_code: &'a str,
     pub program: StmtRef,
@@ -1002,6 +1008,14 @@ pub struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
+    pub fn node_pos(&self, node_ref: NodeRef) -> Pos {
+        match node_ref {
+            NodeRef::ExprRef(r) => self.expr_pool.span(r).pos(self.source_code),
+            NodeRef::StmtRef(r) => self.stmt_pool.span(r).pos(self.source_code),
+            NodeRef::TypeRef(r) => self.type_pool.span(r).pos(self.source_code),
+        }
+    }
+
     fn visit_declaraction(&self, decl: &Decl, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match decl {

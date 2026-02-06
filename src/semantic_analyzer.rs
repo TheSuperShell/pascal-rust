@@ -4,7 +4,7 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     error::Error,
-    parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
+    parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
         CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
         TypeSymbolRef, VarSymbol, VarSymbolRef,
@@ -80,6 +80,7 @@ impl SemanticAnalyzer {
     }
 
     fn visit_stmt(&mut self, node: StmtRef, tree: &Tree) -> Result<(), Error> {
+        let pos = tree.node_pos(NodeRef::StmtRef(node));
         match tree.stmt_pool.get(node) {
             Stmt::Program { name: _, block } => self.visit_stmt(*block, tree),
             Stmt::Block {
@@ -104,6 +105,7 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: format!("cannot assign to {:?}", left_expr),
+                            pos,
                             error_code: None,
                         });
                     }
@@ -115,6 +117,7 @@ impl SemanticAnalyzer {
                 if !assinable(&self.semantic_metadata.types, &left_type, &right_type) {
                     return Err(Error::SemanticError {
                         msg: "value not assignable".to_string(),
+                        pos,
                         error_code: None,
                     });
                 }
@@ -124,6 +127,7 @@ impl SemanticAnalyzer {
                 if self.loop_depth <= 0 {
                     return Err(Error::SemanticError {
                         msg: "break should be within loop".to_string(),
+                        pos,
                         error_code: None,
                     });
                 };
@@ -133,6 +137,7 @@ impl SemanticAnalyzer {
                 if self.loop_depth <= 0 {
                     return Err(Error::SemanticError {
                         msg: "continue should be within loop".to_string(),
+                        pos,
                         error_code: None,
                     });
                 };
@@ -182,6 +187,7 @@ impl SemanticAnalyzer {
                 if !matches!(type_symbol, TypeSymbol::Boolean) {
                     return Err(Error::SemanticError {
                         msg: "condition should be a boolean".to_string(),
+                        pos: tree.node_pos(NodeRef::StmtRef(node)),
                         error_code: None,
                     });
                 };
@@ -205,6 +211,7 @@ impl SemanticAnalyzer {
                         .lookup_var(var.lexem(tree.source_code), false)
                         .ok_or(Error::SemanticError {
                             msg: "unkown_var".to_string(),
+                            pos: tree.node_pos(NodeRef::StmtRef(node)),
                             error_code: None,
                         })?,
                 );
@@ -216,6 +223,7 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: "const cannot be used here".to_string(),
+                            pos: tree.node_pos(NodeRef::StmtRef(node)),
                             error_code: None,
                         });
                     }
@@ -227,12 +235,14 @@ impl SemanticAnalyzer {
                 ) {
                     return Err(Error::SemanticError {
                         msg: "init and end of for should have the same type".to_string(),
+                        pos: tree.node_pos(NodeRef::StmtRef(node)),
                         error_code: None,
                     });
                 }
                 if !TypeSymbol::eq(&self.semantic_metadata.types, &var_type, &init_state_type) {
                     return Err(Error::SemanticError {
                         msg: "variable type should be the same as limit types".to_string(),
+                        pos: tree.node_pos(NodeRef::StmtRef(node)),
                         error_code: None,
                     });
                 }
@@ -244,6 +254,7 @@ impl SemanticAnalyzer {
         }
     }
     fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
+        let pos = tree.node_pos(NodeRef::ExprRef(node));
         let type_symbol = match tree.expr_pool.get(node) {
             Expr::LiteralBool(_) => Ok(TypeSymbol::Boolean),
             Expr::LiteralChar(_) => Ok(TypeSymbol::Char),
@@ -256,6 +267,7 @@ impl SemanticAnalyzer {
                     .lookup_var(name.lexem(tree.source_code), false)
                     .ok_or(Error::SemanticError {
                         msg: format!("unkown var {:?}", name),
+                        pos,
                         error_code: None,
                     })?;
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
@@ -300,6 +312,7 @@ impl SemanticAnalyzer {
                                     "operator {:?} is not supported for {:?} and {:?}",
                                     op, left_type, right_type
                                 ),
+                                pos,
                                 error_code: None,
                             }),
                         }
@@ -313,6 +326,7 @@ impl SemanticAnalyzer {
                                 "integer division is not supported for {:?} and {:?}",
                                 left_type, right_type
                             ),
+                            pos,
                             error_code: None,
                         }),
                     },
@@ -330,6 +344,7 @@ impl SemanticAnalyzer {
                                 "+ is not supported for {:?} and {:?}",
                                 left_type, right_type
                             ),
+                            pos,
                             error_code: None,
                         }),
                     },
@@ -345,6 +360,7 @@ impl SemanticAnalyzer {
                             msg: format!(
                                 "compare operator is only supported for numberical values"
                             ),
+                            pos,
                             error_code: None,
                         }),
                     },
@@ -353,11 +369,13 @@ impl SemanticAnalyzer {
                         (TypeSymbol::Boolean, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                         _ => Err(Error::SemanticError {
                             msg: format!("operator AND and OR are only supported for booleans"),
+                            pos,
                             error_code: None,
                         }),
                     },
                     _ => Err(Error::SemanticError {
                         msg: format!("unsupported binary operaotr {:?}", op),
+                        pos,
                         error_code: None,
                     }),
                 }?;
@@ -374,6 +392,7 @@ impl SemanticAnalyzer {
                     (TokenType::Minus | TokenType::Plus, TypeSymbol::Real) => Ok(TypeSymbol::Real),
                     (_, _) => Err(Error::SemanticError {
                         msg: "unary operator is not applicable here".to_string(),
+                        pos,
                         error_code: None,
                     }),
                 }?;
@@ -384,6 +403,7 @@ impl SemanticAnalyzer {
                     self.visit_callable(&node, tree, name, args)?
                         .ok_or(Error::SemanticError {
                             msg: "procedure cannot be used in an expression".to_string(),
+                            pos: tree.node_pos(NodeRef::ExprRef(node)),
                             error_code: None,
                         })?;
                 self.semantic_metadata.expr_type_map.insert(node, type_ref);
@@ -411,6 +431,7 @@ impl SemanticAnalyzer {
                         ) {
                             return Err(Error::SemanticError {
                                 msg: "index type is incorrect".to_string(),
+                                pos,
                                 error_code: None,
                             });
                         }
@@ -420,6 +441,7 @@ impl SemanticAnalyzer {
                         if !matches!(actual_index_type, TypeSymbol::Integer) {
                             return Err(Error::SemanticError {
                                 msg: "dynamic array index should be integer".to_string(),
+                                pos,
                                 error_code: None,
                             });
                         }
@@ -428,6 +450,7 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: "base of indexable should be array".to_string(),
+                            pos,
                             error_code: None,
                         });
                     }
@@ -446,6 +469,7 @@ impl SemanticAnalyzer {
     }
 
     fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
+        let pos = tree.node_pos(NodeRef::TypeRef(node));
         let type_symbol = match tree.type_pool.get(node) {
             Type::Integer => Ok(TypeSymbol::Integer),
             Type::Real => Ok(TypeSymbol::Real),
@@ -464,6 +488,7 @@ impl SemanticAnalyzer {
                     .lookup_type(v.lexem(tree.source_code), false)
                     .ok_or(Error::SemanticError {
                         msg: format!("unexpected type {:?}", v),
+                        pos,
                         error_code: None,
                     })?;
                 return Ok(alias);
@@ -479,6 +504,7 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: format!("array index type should be range, got {:?}", index_type),
+                            pos,
                             error_code: None,
                         });
                     }
@@ -506,12 +532,14 @@ impl SemanticAnalyzer {
                 ) {
                     return Err(Error::SemanticError {
                         msg: "range limits should be of the same type".to_string(),
+                        pos,
                         error_code: None,
                     });
                 }
                 if !start_val_type.is_ordinal() {
                     return Err(Error::SemanticError {
                         msg: format!("range limits should be opdinal, got {:?}", start_val_type),
+                        pos,
                         error_code: None,
                     });
                 }
@@ -535,12 +563,13 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: format!("expected variable, found {:?}", var_expr),
+                            pos: tree.node_pos(NodeRef::ExprRef(*var)),
                             error_code: None,
                         });
                     }
                 };
-                let literal = tree.expr_pool.get(*literal);
-                let const_type = match literal {
+                let literal_expr = tree.expr_pool.get(*literal);
+                let const_type = match literal_expr {
                     Expr::LiteralInteger(v) => ConstValue::Integer(*v),
                     Expr::LiteralBool(v) => ConstValue::Boolean(*v),
                     Expr::LiteralReal(v) => ConstValue::Real(*v),
@@ -548,7 +577,8 @@ impl SemanticAnalyzer {
                     Expr::LiteralChar(c) => ConstValue::Char(*c),
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: format!("expected literal for const, got {:?}", literal),
+                            msg: format!("expected literal for const, got {:?}", literal_expr),
+                            pos: tree.node_pos(NodeRef::ExprRef(*literal)),
                             error_code: None,
                         });
                     }
@@ -584,6 +614,7 @@ impl SemanticAnalyzer {
                         _ => {
                             return Err(Error::SemanticError {
                                 msg: "expected var".to_string(),
+                                pos: tree.node_pos(NodeRef::ExprRef(param.var)),
                                 error_code: None,
                             });
                         }
@@ -620,13 +651,13 @@ impl SemanticAnalyzer {
                     .get_mut_enclosing_scope()
                     .expect("there is always enclosing scope here")
                     .define_callable(name.lexem(tree.source_code), callable_symbol_ref);
-                let block_stmt = tree.stmt_pool.get(*block);
                 if let Some(return_type_ref) = return_type {
                     let (return_assigned, can_fallthrough) =
-                        analyze_function(tree, name.lexem(tree.source_code), block_stmt, false)?;
+                        analyze_function(tree, name.lexem(tree.source_code), *block, false)?;
                     if can_fallthrough && !return_assigned {
                         return Err(Error::SemanticError {
                             msg: "function may not return a result".to_string(),
+                            pos: name.pos(),
                             error_code: None,
                         });
                     }
@@ -651,12 +682,13 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             Decl::TypeDecl { var, type_node } => {
-                let var = tree.expr_pool.get(*var);
-                let var_name = match var {
+                let var_expr = tree.expr_pool.get(*var);
+                let var_name = match var_expr {
                     Expr::Var { name } => name,
                     _ => {
                         return Err(Error::SemanticError {
                             msg: "expected var, got".to_string(),
+                            pos: tree.node_pos(NodeRef::ExprRef(*var)),
                             error_code: None,
                         });
                     }
@@ -667,6 +699,7 @@ impl SemanticAnalyzer {
                 {
                     return Err(Error::SemanticError {
                         msg: format!("type {:?} is already defined", var_name),
+                        pos: tree.node_pos(NodeRef::ExprRef(*var)),
                         error_code: None,
                     });
                 }
@@ -686,6 +719,7 @@ impl SemanticAnalyzer {
                     _ => {
                         return Err(Error::SemanticError {
                             msg: "expected var".to_string(),
+                            pos: tree.node_pos(NodeRef::ExprRef(*var_ref)),
                             error_code: None,
                         });
                     }
@@ -696,6 +730,7 @@ impl SemanticAnalyzer {
                 {
                     return Err(Error::SemanticError {
                         msg: format!("var {:?} is already defined", var_name),
+                        pos: tree.node_pos(NodeRef::ExprRef(*var_ref)),
                         error_code: None,
                     });
                 }
@@ -708,6 +743,7 @@ impl SemanticAnalyzer {
                     if !TypeSymbol::eq(&self.semantic_metadata.types, &default_type, &type_symbol) {
                         return Err(Error::SemanticError {
                             msg: "default value should have the correct type".to_string(),
+                            pos: tree.node_pos(NodeRef::ExprRef(*expr)),
                             error_code: None,
                         });
                     }
@@ -736,11 +772,13 @@ impl SemanticAnalyzer {
         name: &Token,
         args: &Vec<ExprRef>,
     ) -> Result<Option<TypeSymbolRef>, Error> {
+        let pos = tree.node_pos(NodeRef::ExprRef(*node));
         let callable_symbol_ref = self
             .current_scope
             .lookup_callable(name.lexem(tree.source_code), false)
             .ok_or(Error::SemanticError {
                 msg: format!("could not find callable {}", name.lexem(tree.source_code)),
+                pos,
                 error_code: None,
             })?;
         let arg_expr = args
@@ -764,6 +802,7 @@ impl SemanticAnalyzer {
                     if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
                         return Err(Error::SemanticError {
                             msg: "incorrect type".to_string(),
+                            pos,
                             error_code: None,
                         });
                     }
@@ -771,12 +810,14 @@ impl SemanticAnalyzer {
                 EitherOrBoth::Left(_) => {
                     return Err(Error::SemanticError {
                         msg: "not enough arguments".to_string(),
+                        pos,
                         error_code: None,
                     });
                 }
                 EitherOrBoth::Right(_) => {
                     return Err(Error::SemanticError {
                         msg: "too many arguments".to_string(),
+                        pos,
                         error_code: None,
                     });
                 }
@@ -793,6 +834,7 @@ impl SemanticAnalyzer {
         if !matches!(type_symbol, TypeSymbol::Boolean) {
             return Err(Error::SemanticError {
                 msg: "condition should be boolean".to_string(),
+                pos: tree.node_pos(NodeRef::ExprRef(cond.cond)),
                 error_code: None,
             });
         };
@@ -803,9 +845,11 @@ impl SemanticAnalyzer {
 fn analyze_function(
     tree: &Tree,
     function_name: &str,
-    stmt_node: &Stmt,
+    stmt_node: StmtRef,
     in_assigned: bool,
 ) -> Result<(bool, bool), Error> {
+    let pos = tree.node_pos(NodeRef::StmtRef(stmt_node));
+    let stmt_node = tree.stmt_pool.get(stmt_node);
     match stmt_node {
         Stmt::Block {
             declarations: _,
@@ -813,7 +857,7 @@ fn analyze_function(
         } => Ok(analyze_function(
             tree,
             function_name,
-            tree.stmt_pool.get(*statements),
+            *statements,
             in_assigned,
         )?),
         Stmt::Exit(e) => {
@@ -823,6 +867,7 @@ fn analyze_function(
             if !in_assigned {
                 return Err(Error::SemanticError {
                     msg: "function exited without returning anything".to_string(),
+                    pos,
                     error_code: None,
                 });
             }
@@ -838,6 +883,7 @@ fn analyze_function(
                 )),
                 _ => Err(Error::SemanticError {
                     msg: "should be var".to_string(),
+                    pos,
                     error_code: None,
                 }),
             }
@@ -850,7 +896,7 @@ fn analyze_function(
             let mut thens = vec![analyze_function(
                 tree,
                 function_name,
-                tree.stmt_pool.get(cond.expr),
+                cond.expr,
                 in_assigned,
             )];
             thens.extend(elifs.iter().map(
@@ -858,22 +904,12 @@ fn analyze_function(
                      cond: _,
                      expr: expr_ref,
                  }| {
-                    analyze_function(
-                        tree,
-                        function_name,
-                        tree.stmt_pool.get(*expr_ref),
-                        in_assigned,
-                    )
+                    analyze_function(tree, function_name, *expr_ref, in_assigned)
                 },
             ));
             match else_statement {
                 Some(stmt) => {
-                    thens.push(analyze_function(
-                        tree,
-                        function_name,
-                        tree.stmt_pool.get(*stmt),
-                        in_assigned,
-                    ));
+                    thens.push(analyze_function(tree, function_name, *stmt, in_assigned));
                 }
                 None => thens.push(Ok((in_assigned, true))),
             };
@@ -885,7 +921,7 @@ fn analyze_function(
             Ok((out, fall))
         }
         Stmt::While { cond: _, body } => {
-            analyze_function(tree, function_name, tree.stmt_pool.get(*body), in_assigned)?;
+            analyze_function(tree, function_name, *body, in_assigned)?;
             Ok((in_assigned, true))
         }
         Stmt::For {
@@ -894,7 +930,7 @@ fn analyze_function(
             end: _,
             body,
         } => {
-            analyze_function(tree, function_name, tree.stmt_pool.get(*body), in_assigned)?;
+            analyze_function(tree, function_name, *body, in_assigned)?;
             Ok((in_assigned, true))
         }
         Stmt::Compound(stmts) => {
@@ -904,8 +940,7 @@ fn analyze_function(
                 if !fall {
                     break;
                 }
-                let stmt = tree.stmt_pool.get(*stmt);
-                (assign, fall) = analyze_function(tree, function_name, stmt, assign)?;
+                (assign, fall) = analyze_function(tree, function_name, *stmt, assign)?;
             }
             Ok((assign, fall))
         }

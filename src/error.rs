@@ -27,6 +27,7 @@ pub enum Error {
     },
     SemanticError {
         msg: String,
+        pos: Pos,
         error_code: Option<ErrorCode>,
     },
     RuntimeError {
@@ -67,8 +68,16 @@ impl std::fmt::Display for Error {
                     msg
                 )
             }
-            Error::SemanticError { msg, error_code } => {
-                write!(f, "Semantic Error {:?}: {}", error_code, msg)
+            Error::SemanticError {
+                msg,
+                pos,
+                error_code,
+            } => {
+                write!(
+                    f,
+                    "Semantic Error at row {} col {} ({:?}): {}",
+                    pos.row, pos.col, error_code, msg
+                )
             }
             Error::RuntimeError { msg } => {
                 write!(f, "Runtime Error: {}", msg)

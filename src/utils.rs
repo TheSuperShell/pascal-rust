@@ -37,7 +37,7 @@ impl Span {
         let up_to = &src[0..self.start as usize];
         let rows: Vec<&str> = up_to.split("\n").collect();
         let row_count = rows.len() as u32;
-        let col = rows.last().iter().len() as u32;
+        let col = rows.last().map_or(1, |r| r.len() + 1) as u32;
         Pos {
             row: row_count,
             col,
