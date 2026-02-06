@@ -338,7 +338,7 @@ impl Interpreter {
                             _ => panic!(),
                         };
                     }
-                    _ => panic!("unreachable"),
+                    _ => unreachable!(),
                 };
                 Ok(ControlFlow::Continue(()))
             }
@@ -347,7 +347,7 @@ impl Interpreter {
                 loop {
                     let c = match self.visit_expr(*cond, tree, semantic_metadata)? {
                         Value::Boolean(b) => b,
-                        _ => panic!("unreachable"),
+                        _ => unreachable!(),
                     };
                     if !c {
                         break;
@@ -378,7 +378,7 @@ impl Interpreter {
                     self.visit_callable(call, name, args, tree, semantic_metadata)?;
                     Ok(ControlFlow::Continue(()))
                 }
-                _ => panic!("unreachable"),
+                _ => unreachable!(),
             },
             Stmt::If {
                 cond,
@@ -496,7 +496,7 @@ impl Interpreter {
                     (TokenType::Minus, Value::Real(v)) => Ok(Value::Real(-v)),
                     (TokenType::Plus, Value::Integer(v)) => Ok(Value::Integer(v)),
                     (TokenType::Plus, Value::Real(v)) => Ok(Value::Real(v)),
-                    _ => panic!("unreachable"),
+                    _ => unreachable!(),
                 }
             }
             Expr::BinOp { op, left, right } => {
@@ -516,7 +516,7 @@ impl Interpreter {
                 //     .get(*self.type_range_map.get(type_symbol_ref).unwrap());
                 let var_name = match tree.expr_pool.get(*base) {
                     Expr::Var { name } => name,
-                    _ => panic!("unreachable"),
+                    _ => unreachable!(),
                 };
                 let index_value = index_value.ordinal_rank()?;
                 let arr_value = self
@@ -560,7 +560,7 @@ impl Interpreter {
                 let var_expr = tree.expr_pool.get(*var);
                 let var_name = match var_expr {
                     Expr::Var { name } => name,
-                    _ => panic!("unreachable"),
+                    _ => unreachable!(),
                 };
                 self.call_stack
                     .peek_mut()
@@ -640,7 +640,7 @@ impl Interpreter {
                                     name,
                                     type_symbol: _,
                                 } => name,
-                                _ => panic!("unreachable"),
+                                _ => unreachable!(),
                             };
                             let value = self.visit_expr(*arg, tree, semantic_metadata)?;
                             ar.set(var_name);
@@ -683,7 +683,7 @@ impl Interpreter {
                             Expr::Var { name } => Ok(LValue::Ref {
                                 name: name.lexem(tree.source_code),
                             }),
-                            _ => panic!("unreachable"),
+                            _ => unreachable!(),
                         },
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
@@ -752,74 +752,74 @@ fn bin_op(op: &TokenType, v_l: Value, v_r: Value) -> Value {
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
             (Value::String(v_l), Value::String(v_r)) => Value::String(v_l + &v_r),
             (Value::String(v_l), Value::Char(v_r)) => Value::String(v_l + &v_r.to_string()),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::Minus => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l - v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 - v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l - v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::Mul => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l * v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 * v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l * v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l * v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::RealDiv => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Real(v_l as f64 / v_r as f64),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 / v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l / v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l / v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::IntegerDiv => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l / v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => {
                 Value::Integer((v_l / v_r as f64).floor() as i64)
             }
-            _ => panic!("Unreachable"),
+            _ => unreachable!(),
         },
         TokenType::Equal => Value::Boolean(v_l == v_r),
         TokenType::NotEqual => Value::Boolean(v_l != v_r),
         TokenType::And => match (v_l, v_r) {
             (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l && v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::Or => match (v_l, v_r) {
             (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l || v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::GreaterThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean(v_l as f64 > v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l > v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::LessThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) < v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l < v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::GreaterEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) >= v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l >= v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
         TokenType::LessEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r),
             (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) <= v_r),
             (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r as f64),
             (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l <= v_r),
-            _ => panic!("unreachable"),
+            _ => unreachable!(),
         },
-        _ => panic!("unreachable"),
+        _ => unreachable!(),
     }
 }
