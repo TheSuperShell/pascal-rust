@@ -5,7 +5,7 @@ program fib;
             exit(val);
         exit(fib(val - 1) + fib(val - 2));
     end;
-    var i: char = 10;
+    var i: char = 'a';
     var arr: array['a'..'z'] of char;
 begin
     for i := 'a' to 'z' do

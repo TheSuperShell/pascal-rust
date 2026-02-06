@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
         CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
@@ -104,9 +104,9 @@ impl SemanticAnalyzer {
                     } => (),
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: format!("cannot assign to {:?}", left_expr),
+                            msg: format!("can only assign to variable, {:?}", left_expr),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::AssignmentError,
                         });
                     }
                 }
@@ -116,9 +116,12 @@ impl SemanticAnalyzer {
                 let right_type = self.semantic_metadata.types.get(right_type_ref);
                 if !assinable(&self.semantic_metadata.types, &left_type, &right_type) {
                     return Err(Error::SemanticError {
-                        msg: "value not assignable".to_string(),
+                        msg: format!(
+                            "value of type {:?} is not assignable to {:?}",
+                            right_type, left_type
+                        ),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::AssignmentError,
                     });
                 }
                 Ok(())
@@ -128,7 +131,7 @@ impl SemanticAnalyzer {
                     return Err(Error::SemanticError {
                         msg: "break should be within loop".to_string(),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::BreakOutsideLoop,
                     });
                 };
                 Ok(())
@@ -138,7 +141,7 @@ impl SemanticAnalyzer {
                     return Err(Error::SemanticError {
                         msg: "continue should be within loop".to_string(),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::ContinueOutsideLoop,
                     });
                 };
                 Ok(())
@@ -186,9 +189,9 @@ impl SemanticAnalyzer {
                 let type_symbol = self.semantic_metadata.types.get(type_ref);
                 if !matches!(type_symbol, TypeSymbol::Boolean) {
                     return Err(Error::SemanticError {
-                        msg: "condition should be a boolean".to_string(),
+                        msg: format!("condition should be a boolean, got {:?}", type_symbol),
                         pos: tree.node_pos(NodeRef::StmtRef(node)),
-                        error_code: None,
+                        error_code: ErrorCode::ConditionNotBoolean,
                     });
                 };
                 self.loop_depth += 1;
@@ -210,9 +213,9 @@ impl SemanticAnalyzer {
                     self.current_scope
                         .lookup_var(var.lexem(tree.source_code), false)
                         .ok_or(Error::SemanticError {
-                            msg: "unkown_var".to_string(),
+                            msg: format!("var `{}` is unkown", var.lexem(tree.source_code)),
                             pos: tree.node_pos(NodeRef::StmtRef(node)),
-                            error_code: None,
+                            error_code: ErrorCode::UnkownVariable,
                         })?,
                 );
                 let var_type = match var_node {
@@ -222,9 +225,9 @@ impl SemanticAnalyzer {
                     } => self.semantic_metadata.types.get(*type_symbol),
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: "const cannot be used here".to_string(),
+                            msg: format!("expected var, got {:?}", var_node),
                             pos: tree.node_pos(NodeRef::StmtRef(node)),
-                            error_code: None,
+                            error_code: ErrorCode::ExpectedVar,
                         });
                     }
                 };
@@ -234,16 +237,22 @@ impl SemanticAnalyzer {
                     &end_state_type,
                 ) {
                     return Err(Error::SemanticError {
-                        msg: "init and end of for should have the same type".to_string(),
+                        msg: format!(
+                            "initial and end of for loop should have the same type, got {:?} and {:?}",
+                            init_state_type, end_state_type
+                        ),
                         pos: tree.node_pos(NodeRef::StmtRef(node)),
-                        error_code: None,
+                        error_code: ErrorCode::IncompatibleTypes,
                     });
                 }
                 if !TypeSymbol::eq(&self.semantic_metadata.types, &var_type, &init_state_type) {
                     return Err(Error::SemanticError {
-                        msg: "variable type should be the same as limit types".to_string(),
+                        msg: format!(
+                            "variable type of for loop should be the same as limit types, limit is {:?}, but variable is {:?}",
+                            init_state_type, var_type
+                        ),
                         pos: tree.node_pos(NodeRef::StmtRef(node)),
-                        error_code: None,
+                        error_code: ErrorCode::IncompatibleTypes,
                     });
                 }
                 self.loop_depth += 1;
@@ -266,9 +275,9 @@ impl SemanticAnalyzer {
                     .current_scope
                     .lookup_var(name.lexem(tree.source_code), false)
                     .ok_or(Error::SemanticError {
-                        msg: format!("unkown var {:?}", name),
+                        msg: format!("var {} is unkown", name.lexem(tree.source_code)),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::UnkownVariable,
                     })?;
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
                 self.semantic_metadata
@@ -313,7 +322,7 @@ impl SemanticAnalyzer {
                                     op, left_type, right_type
                                 ),
                                 pos,
-                                error_code: None,
+                                error_code: ErrorCode::UnsupportedBinaryOperator,
                             }),
                         }
                     }
@@ -327,7 +336,7 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::UnsupportedBinaryOperator,
                         }),
                     },
                     TokenType::Plus => match (&left_type, &right_type) {
@@ -345,7 +354,7 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::UnsupportedBinaryOperator,
                         }),
                     },
                     TokenType::GreaterThen
@@ -358,25 +367,29 @@ impl SemanticAnalyzer {
                         ) => Ok(TypeSymbol::Boolean),
                         _ => Err(Error::SemanticError {
                             msg: format!(
-                                "compare operator is only supported for numberical values"
+                                "compare operator is not supported for {:?} and {:?}",
+                                left_type, right_type
                             ),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::UnsupportedBinaryOperator,
                         }),
                     },
                     TokenType::Equal | TokenType::NotEqual => Ok(TypeSymbol::Boolean),
                     TokenType::And | TokenType::Or => match (left_type, right_type) {
                         (TypeSymbol::Boolean, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                         _ => Err(Error::SemanticError {
-                            msg: format!("operator AND and OR are only supported for booleans"),
+                            msg: format!(
+                                "operator AND/OR is not supported for {:?} and {:?}",
+                                left_type, right_type
+                            ),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::UnsupportedBinaryOperator,
                         }),
                     },
                     _ => Err(Error::SemanticError {
-                        msg: format!("unsupported binary operaotr {:?}", op),
+                        msg: format!("unsupported binary operator {:?}", op),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::UnsupportedBinaryOperator,
                     }),
                 }?;
                 Ok(type_symbol)
@@ -391,9 +404,12 @@ impl SemanticAnalyzer {
                     }
                     (TokenType::Minus | TokenType::Plus, TypeSymbol::Real) => Ok(TypeSymbol::Real),
                     (_, _) => Err(Error::SemanticError {
-                        msg: "unary operator is not applicable here".to_string(),
+                        msg: format!(
+                            "unary operator {:?} is not applicable for {:?}",
+                            op, expr_type
+                        ),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::UnsupportedUnaryOperator,
                     }),
                 }?;
                 Ok(type_symbol)
@@ -404,7 +420,7 @@ impl SemanticAnalyzer {
                         .ok_or(Error::SemanticError {
                             msg: "procedure cannot be used in an expression".to_string(),
                             pos: tree.node_pos(NodeRef::ExprRef(node)),
-                            error_code: None,
+                            error_code: ErrorCode::IncorrectUseOfProcedure,
                         })?;
                 self.semantic_metadata.expr_type_map.insert(node, type_ref);
                 return Ok(type_ref);
@@ -430,9 +446,12 @@ impl SemanticAnalyzer {
                             &actual_index_type,
                         ) {
                             return Err(Error::SemanticError {
-                                msg: "index type is incorrect".to_string(),
+                                msg: format!(
+                                    "expected {:?} as index, got {:?}",
+                                    index_type, actual_index_type
+                                ),
                                 pos,
-                                error_code: None,
+                                error_code: ErrorCode::IncorrectIndexType,
                             });
                         }
                         value_type
@@ -440,18 +459,21 @@ impl SemanticAnalyzer {
                     TypeSymbol::DynamicArray(v) => {
                         if !matches!(actual_index_type, TypeSymbol::Integer) {
                             return Err(Error::SemanticError {
-                                msg: "dynamic array index should be integer".to_string(),
+                                msg: format!(
+                                    "dynamic array index should be integer, got {:?}",
+                                    actual_index_type
+                                ),
                                 pos,
-                                error_code: None,
+                                error_code: ErrorCode::IncorrectIndexType,
                             });
                         }
                         v
                     }
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: "base of indexable should be array".to_string(),
+                            msg: format!("base of indexable should be array, got {:?}", var_type),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::IncorrectBaseType,
                         });
                     }
                 };
@@ -487,9 +509,9 @@ impl SemanticAnalyzer {
                     .current_scope
                     .lookup_type(v.lexem(tree.source_code), false)
                     .ok_or(Error::SemanticError {
-                        msg: format!("unexpected type {:?}", v),
+                        msg: format!("type {:?} is unknown", v),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::UnkownType,
                     })?;
                 return Ok(alias);
             }
@@ -505,7 +527,7 @@ impl SemanticAnalyzer {
                         return Err(Error::SemanticError {
                             msg: format!("array index type should be range, got {:?}", index_type),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::IncorrectIndexType,
                         });
                     }
                 }
@@ -531,16 +553,19 @@ impl SemanticAnalyzer {
                     &end_val_type,
                 ) {
                     return Err(Error::SemanticError {
-                        msg: "range limits should be of the same type".to_string(),
+                        msg: format!(
+                            "range limits should be of the same type, got {:?} and {:?}",
+                            start_val_type, end_val_type
+                        ),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::IncompatibleTypes,
                     });
                 }
                 if !start_val_type.is_ordinal() {
                     return Err(Error::SemanticError {
-                        msg: format!("range limits should be opdinal, got {:?}", start_val_type),
+                        msg: format!("range limits should be ordinal, got {:?}", start_val_type),
                         pos,
-                        error_code: None,
+                        error_code: ErrorCode::RangeLimitsNotOrdinal,
                     });
                 }
 
@@ -564,7 +589,7 @@ impl SemanticAnalyzer {
                         return Err(Error::SemanticError {
                             msg: format!("expected variable, found {:?}", var_expr),
                             pos: tree.node_pos(NodeRef::ExprRef(*var)),
-                            error_code: None,
+                            error_code: ErrorCode::ExpectedVar,
                         });
                     }
                 };
@@ -579,7 +604,7 @@ impl SemanticAnalyzer {
                         return Err(Error::SemanticError {
                             msg: format!("expected literal for const, got {:?}", literal_expr),
                             pos: tree.node_pos(NodeRef::ExprRef(*literal)),
-                            error_code: None,
+                            error_code: ErrorCode::ExpectedLiteral,
                         });
                     }
                 };
@@ -613,9 +638,9 @@ impl SemanticAnalyzer {
                         Expr::Var { name } => name,
                         _ => {
                             return Err(Error::SemanticError {
-                                msg: "expected var".to_string(),
+                                msg: format!("expected var, got {:?}", var_expr),
                                 pos: tree.node_pos(NodeRef::ExprRef(param.var)),
-                                error_code: None,
+                                error_code: ErrorCode::ExpectedVar,
                             });
                         }
                     };
@@ -656,9 +681,12 @@ impl SemanticAnalyzer {
                         analyze_function(tree, name.lexem(tree.source_code), *block, false)?;
                     if can_fallthrough && !return_assigned {
                         return Err(Error::SemanticError {
-                            msg: "function may not return a result".to_string(),
+                            msg: format!(
+                                "function {} may not return a result",
+                                name.lexem(tree.source_code)
+                            ),
                             pos: name.pos(),
-                            error_code: None,
+                            error_code: ErrorCode::FunctionMayNotReturn,
                         });
                     }
                     let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
@@ -687,9 +715,9 @@ impl SemanticAnalyzer {
                     Expr::Var { name } => name,
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: "expected var, got".to_string(),
+                            msg: format!("expected var, got {:?}", var_expr),
                             pos: tree.node_pos(NodeRef::ExprRef(*var)),
-                            error_code: None,
+                            error_code: ErrorCode::ExpectedVar,
                         });
                     }
                 };
@@ -700,7 +728,7 @@ impl SemanticAnalyzer {
                     return Err(Error::SemanticError {
                         msg: format!("type {:?} is already defined", var_name),
                         pos: tree.node_pos(NodeRef::ExprRef(*var)),
-                        error_code: None,
+                        error_code: ErrorCode::DuplicateTypeDefinition,
                     });
                 }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
@@ -718,9 +746,9 @@ impl SemanticAnalyzer {
                     Expr::Var { name } => name,
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: "expected var".to_string(),
+                            msg: format!("expected var, got {:?}", var),
                             pos: tree.node_pos(NodeRef::ExprRef(*var_ref)),
-                            error_code: None,
+                            error_code: ErrorCode::ExpectedVar,
                         });
                     }
                 };
@@ -731,7 +759,7 @@ impl SemanticAnalyzer {
                     return Err(Error::SemanticError {
                         msg: format!("var {:?} is already defined", var_name),
                         pos: tree.node_pos(NodeRef::ExprRef(*var_ref)),
-                        error_code: None,
+                        error_code: ErrorCode::DuplicateVarDefinition,
                     });
                 }
                 let type_symbol_ref = self.visit_type(*type_node, tree)?;
@@ -742,9 +770,12 @@ impl SemanticAnalyzer {
                     let type_symbol = self.semantic_metadata.types.get(type_symbol_ref);
                     if !TypeSymbol::eq(&self.semantic_metadata.types, &default_type, &type_symbol) {
                         return Err(Error::SemanticError {
-                            msg: "default value should have the correct type".to_string(),
+                            msg: format!(
+                                "default value should have the type {:?}, but it is {:?}",
+                                type_symbol, default_type
+                            ),
                             pos: tree.node_pos(NodeRef::ExprRef(*expr)),
-                            error_code: None,
+                            error_code: ErrorCode::IncorrectType,
                         });
                     }
                 }
@@ -779,7 +810,7 @@ impl SemanticAnalyzer {
             .ok_or(Error::SemanticError {
                 msg: format!("could not find callable {}", name.lexem(tree.source_code)),
                 pos,
-                error_code: None,
+                error_code: ErrorCode::UnkownCallable,
             })?;
         let arg_expr = args
             .iter()
@@ -787,6 +818,7 @@ impl SemanticAnalyzer {
             .collect::<Result<Vec<_>, Error>>()?;
         let callable_symbol = self.semantic_metadata.callables.get(callable_symbol_ref);
         let return_type = callable_symbol.return_type;
+        let arg_count = arg_expr.len();
         for r in callable_symbol.params.iter().zip_longest(arg_expr) {
             match r {
                 EitherOrBoth::Both((p, _), expr_type) => {
@@ -801,24 +833,25 @@ impl SemanticAnalyzer {
                     };
                     if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
                         return Err(Error::SemanticError {
-                            msg: "incorrect type".to_string(),
+                            msg: format!(
+                                "parameter should be of type {:?}, got {:?}",
+                                param_type, expr_type
+                            ),
                             pos,
-                            error_code: None,
+                            error_code: ErrorCode::IncorrectType,
                         });
                     }
                 }
-                EitherOrBoth::Left(_) => {
+                _ => {
                     return Err(Error::SemanticError {
-                        msg: "not enough arguments".to_string(),
+                        msg: format!(
+                            "function {} expected {} arguments, but for {}",
+                            name.lexem(tree.source_code),
+                            callable_symbol.params.len(),
+                            arg_count,
+                        ),
                         pos,
-                        error_code: None,
-                    });
-                }
-                EitherOrBoth::Right(_) => {
-                    return Err(Error::SemanticError {
-                        msg: "too many arguments".to_string(),
-                        pos,
-                        error_code: None,
+                        error_code: ErrorCode::IncorrectNumberOfArguments,
                     });
                 }
             }
@@ -833,9 +866,9 @@ impl SemanticAnalyzer {
         let type_symbol = self.semantic_metadata.types.get(type_ref);
         if !matches!(type_symbol, TypeSymbol::Boolean) {
             return Err(Error::SemanticError {
-                msg: "condition should be boolean".to_string(),
+                msg: format!("condition should be boolean, got {:?}", type_symbol),
                 pos: tree.node_pos(NodeRef::ExprRef(cond.cond)),
-                error_code: None,
+                error_code: ErrorCode::IncorrectType,
             });
         };
         self.visit_stmt(cond.expr, tree)?;
@@ -866,9 +899,9 @@ fn analyze_function(
             }
             if !in_assigned {
                 return Err(Error::SemanticError {
-                    msg: "function exited without returning anything".to_string(),
+                    msg: format!("function exited without returning anything"),
                     pos,
-                    error_code: None,
+                    error_code: ErrorCode::FunctionMayNotReturn,
                 });
             }
             Ok((in_assigned, true))
@@ -882,9 +915,9 @@ fn analyze_function(
                     true,
                 )),
                 _ => Err(Error::SemanticError {
-                    msg: "should be var".to_string(),
+                    msg: format!("expected var, got {:?}", left_expr),
                     pos,
-                    error_code: None,
+                    error_code: ErrorCode::ExpectedVar,
                 }),
             }
         }
