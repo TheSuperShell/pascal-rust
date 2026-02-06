@@ -309,20 +309,29 @@ impl Interpreter {
                         .set_value(name.lexem(tree.source_code), val),
                     Expr::Index {
                         base,
-                        index_value,
+                        index_value: index_value_ref,
                         other_indicies: _,
                     } => {
-                        let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
-                        // let base_type_ref = semantic_metadata.expr_type_map.get(base).unwrap();
-                        // let range_symbol = self
-                        //     .range_symbols
-                        //     .get(*self.type_range_map.get(base_type_ref).unwrap());
-                        let index_value = index_value.ordinal_rank()?;
+                        let index_value =
+                            self.visit_expr(*index_value_ref, tree, semantic_metadata)?;
+                        let arr_type = semantic_metadata
+                            .types
+                            .get(*semantic_metadata.expr_type_map.get(base).unwrap());
+                        let range_symbol = match arr_type {
+                            TypeSymbol::Array {
+                                index_type,
+                                value_type: _,
+                            } => self
+                                .range_symbols
+                                .get(*self.type_range_map.get(index_type).unwrap()),
+                            _ => panic!(),
+                        };
+                        let index_value = range_symbol.get_index(&index_value)?;
                         match tree.expr_pool.get(*base) {
                             Expr::Var { name } => self.call_stack.write(
                                 &LValue::ArrIndex {
                                     name: name.lexem(tree.source_code),
-                                    index: index_value as usize,
+                                    index: index_value,
                                 },
                                 val,
                             )?,

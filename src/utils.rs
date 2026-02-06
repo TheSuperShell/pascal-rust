@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{hash::Hash, marker::PhantomData};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pos {
@@ -27,6 +27,13 @@ impl Span {
         &src[s..e]
     }
 }
+
+impl Hash for Span {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.start.hash(state);
+        self.len.hash(state);
+    }
+}
 #[derive(Debug, Clone)]
 pub struct NodePool<Ref, T> {
     items: Vec<T>,
@@ -52,6 +59,13 @@ where
 
     pub fn get(&self, id: Ref) -> &T {
         &self.items[id.into()]
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn ids(&self) -> impl Iterator<Item = Ref> {
+        (0..self.len()).map(|id| Ref::from(id))
     }
 }
 

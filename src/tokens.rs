@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
 use crate::utils::{Pos, Span};
 
@@ -34,6 +34,14 @@ impl Token {
 impl PartialEq for Token {
     fn eq(&self, other: &Self) -> bool {
         self.token_type == other.token_type
+    }
+}
+
+impl Eq for Token {}
+
+impl Hash for Token {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.span.hash(state);
     }
 }
 

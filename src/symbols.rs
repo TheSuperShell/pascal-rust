@@ -26,6 +26,7 @@ pub enum TypeSymbol {
     DynamicArray(TypeSymbolRef),
     Enum(Vec<String>),
     Any,
+    Empty,
 }
 
 impl TypeSymbol {
@@ -105,10 +106,10 @@ impl RangeSymbol {
     pub fn len(&self) -> usize {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }
-    // pub fn get_index(&self, value: &Value) -> Result<usize, Error> {
-    //     let ord = value.ordinal_rank()?;
-    //     Ok((ord - self.lower_index) as usize)
-    // }
+    pub fn get_index(&self, value: &Value) -> Result<usize, Error> {
+        let ord = value.ordinal_rank()?;
+        Ok((ord - self.lower_index) as usize)
+    }
 }
 
 #[derive(Debug, Clone)]

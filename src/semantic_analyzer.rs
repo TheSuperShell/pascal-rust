@@ -26,9 +26,6 @@ pub struct SemanticMetadata {
 }
 
 impl SemanticMetadata {
-    // pub fn get_type_type(&self, type_ref: &TypeRef) -> Option<&TypeSymbol> {
-    //     self.type_type_map.get(type_ref).map(|r| self.types.get(*r))
-    // }
     pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
         self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
     }
@@ -65,6 +62,20 @@ impl SemanticAnalyzer {
 
     pub fn analyze(mut self, tree: &Tree) -> Result<SemanticMetadata, Error> {
         self.visit_stmt(tree.program, tree)?;
+        let missing: Vec<&Expr> = tree
+            .expr_pool
+            .ids()
+            .filter(|k| !self.semantic_metadata.expr_type_map.contains_key(k))
+            .map(|id| tree.expr_pool.get(id))
+            .collect();
+        if !(tree.expr_pool.len() == self.semantic_metadata.expr_type_map.len()
+            && missing.len() == 0)
+        {
+            println!(
+                "WARNING: not all of the expressions were assigned a type:\n{:#?}",
+                missing
+            )
+        }
         Ok(self.semantic_metadata)
     }
 
@@ -132,6 +143,8 @@ impl SemanticAnalyzer {
                 match callable_expr {
                     Expr::Call { name, args } => {
                         self.visit_callable(&call, tree, name, args)?;
+                        let none_ref = self.semantic_metadata.types.alloc(TypeSymbol::Empty);
+                        self.semantic_metadata.expr_type_map.insert(*call, none_ref);
                         Ok(())
                     }
                     _ => panic!("unreachable"),
@@ -253,7 +266,12 @@ impl SemanticAnalyzer {
                     VarSymbol::Var {
                         name: _,
                         type_symbol,
-                    } => return Ok(*type_symbol),
+                    } => {
+                        self.semantic_metadata
+                            .expr_type_map
+                            .insert(node, *type_symbol);
+                        return Ok(*type_symbol);
+                    }
                     VarSymbol::Const { value } => match value {
                         ConstValue::Integer(_) => TypeSymbol::Integer,
                         ConstValue::Boolean(_) => TypeSymbol::Boolean,
@@ -362,12 +380,14 @@ impl SemanticAnalyzer {
                 Ok(type_symbol)
             }
             Expr::Call { name, args } => {
-                return self
-                    .visit_callable(&node, tree, name, args)?
-                    .ok_or(Error::SemanticError {
-                        msg: "procedure cannot be used in an expression".to_string(),
-                        error_code: None,
-                    });
+                let type_ref =
+                    self.visit_callable(&node, tree, name, args)?
+                        .ok_or(Error::SemanticError {
+                            msg: "procedure cannot be used in an expression".to_string(),
+                            error_code: None,
+                        })?;
+                self.semantic_metadata.expr_type_map.insert(node, type_ref);
+                return Ok(type_ref);
             }
             Expr::Index {
                 base,
@@ -412,6 +432,9 @@ impl SemanticAnalyzer {
                         });
                     }
                 };
+                self.semantic_metadata
+                    .expr_type_map
+                    .insert(node, *base_type_ref);
                 return Ok(*base_type_ref);
             }
         }?;
@@ -449,10 +472,20 @@ impl SemanticAnalyzer {
                 index_type,
                 element_type,
             } => {
-                let index_type = self.visit_type(*index_type, tree)?;
+                let index_type_ref = self.visit_type(*index_type, tree)?;
+                let index_type = self.semantic_metadata.types.get(index_type_ref);
+                match index_type {
+                    TypeSymbol::Range(_) => (),
+                    _ => {
+                        return Err(Error::SemanticError {
+                            msg: format!("array index type should be range, got {:?}", index_type),
+                            error_code: None,
+                        });
+                    }
+                }
                 let element_type = self.visit_type(*element_type, tree)?;
                 Ok(TypeSymbol::Array {
-                    index_type,
+                    index_type: index_type_ref,
                     value_type: element_type,
                 })
             }
@@ -556,6 +589,9 @@ impl SemanticAnalyzer {
                         }
                     };
                     let type_symbol_ref = self.visit_type(param.type_node, tree)?;
+                    self.semantic_metadata
+                        .expr_type_map
+                        .insert(param.var, type_symbol_ref);
                     let var_symbol = VarSymbol::Var {
                         name: var_name.lexem(tree.source_code).to_string(),
                         type_symbol: type_symbol_ref,
