@@ -13,7 +13,7 @@ impl Token {
     pub fn new(token_type: TokenType, start: u32, len: u32, pos: Pos) -> Self {
         Self {
             token_type,
-            span: Span { start, len },
+            span: Span::new(start, len),
             pos,
         }
     }
@@ -28,6 +28,10 @@ impl Token {
 
     pub fn pos(&self) -> Pos {
         self.pos
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
     }
 }
 
