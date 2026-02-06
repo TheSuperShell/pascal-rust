@@ -20,8 +20,9 @@ fn writeln(
                 println!("{}", v.to_string());
                 Ok(())
             }
-            _ => Err(Error::RuntimeError {
-                msg: "unexpected".into(),
+            _ => Err(Error::BuiltinFunctionError {
+                function_name: "writeln",
+                msg: format!("expected literal value, got {:?}", v),
             }),
         })
         .collect::<Result<(), Error>>()?;
@@ -37,8 +38,12 @@ fn readln(
             let mut s = String::new();
             stdin()
                 .read_line(&mut s)
-                .expect("did not enter correct string");
-            ctx.write(v, Value::String(s))
+                .map_err(|e| Error::BuiltinFunctionError {
+                    function_name: "readln",
+                    msg: format!("read line error: {e}"),
+                })?;
+            ctx.write(v, Value::String(s));
+            Ok(())
         })
         .collect::<Result<(), Error>>()?;
     Ok(None)

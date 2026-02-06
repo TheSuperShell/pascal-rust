@@ -75,6 +75,12 @@ pub enum Error {
     },
     RuntimeError {
         msg: String,
+        pos: Pos,
+    },
+    IoError(std::io::Error),
+    BuiltinFunctionError {
+        function_name: &'static str,
+        msg: String,
     },
 }
 
@@ -126,9 +132,23 @@ impl std::fmt::Display for Error {
                     msg
                 )
             }
-            Error::RuntimeError { msg } => {
-                write!(f, "Runtime Error: {}", msg)
+            Error::RuntimeError { msg, pos } => {
+                write!(
+                    f,
+                    "Runtime Error at row {} col {}: {}",
+                    pos.row, pos.col, msg
+                )
             }
+            Error::BuiltinFunctionError { function_name, msg } => {
+                write!(f, "Builtin function {function_name} error: {msg}")
+            }
+            Error::IoError(e) => e.fmt(f),
         }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
     }
 }

@@ -33,14 +33,12 @@ impl TypeSymbol {
     pub fn is_ordinal(&self) -> bool {
         matches!(self, Self::Integer | Self::Char | Self::Boolean)
     }
-    pub fn oridnal_value(&self, index: i64) -> Result<Value, Error> {
+    pub fn oridnal_value(&self, index: i64) -> Value {
         match self {
-            TypeSymbol::Integer => Ok(Value::Integer(index)),
-            TypeSymbol::Char => Ok(Value::Char(char::from_u32(index as u32).unwrap())),
-            TypeSymbol::Boolean => Ok(Value::Boolean(index != 0)),
-            _ => Err(Error::RuntimeError {
-                msg: format!("ordinal value is not supported for {:?}", self),
-            }),
+            TypeSymbol::Integer => Value::Integer(index),
+            TypeSymbol::Char => Value::Char(char::from_u32(index as u32).unwrap()),
+            TypeSymbol::Boolean => Value::Boolean(index != 0),
+            _ => unreachable!(),
         }
     }
 
@@ -96,19 +94,19 @@ pub struct RangeSymbol {
 }
 
 impl RangeSymbol {
-    pub fn new(lower_value: &Value, upper_value: &Value) -> Result<Self, Error> {
-        Ok(Self {
-            lower_index: lower_value.ordinal_rank()?,
-            higher_index: upper_value.ordinal_rank()?,
-        })
+    pub fn new(lower_value: &Value, upper_value: &Value) -> Self {
+        Self {
+            lower_index: lower_value.ordinal_rank(),
+            higher_index: upper_value.ordinal_rank(),
+        }
     }
 
     pub fn len(&self) -> usize {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }
-    pub fn get_index(&self, value: &Value) -> Result<usize, Error> {
-        let ord = value.ordinal_rank()?;
-        Ok((ord - self.lower_index) as usize)
+    pub fn get_index(&self, value: &Value) -> usize {
+        let ord = value.ordinal_rank();
+        (ord - self.lower_index) as usize
     }
 }
 

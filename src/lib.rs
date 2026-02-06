@@ -16,8 +16,8 @@ use crate::{
     error::Error, interpreter::Interpreter, parser::Parser, semantic_analyzer::SemanticAnalyzer,
 };
 
-pub fn interprete<P: AsRef<Path>>(path: P) -> Result<(), Error> {
-    let source_code = std::fs::read_to_string(path).expect("file should exist");
+pub fn interprete<P: AsRef<Path> + ToString>(path: P) -> Result<(), Error> {
+    let source_code = std::fs::read_to_string(path)?;
     let lexer = Lexer::new(&source_code);
     let parser = Parser::new(lexer)?;
     let tree = parser.parse()?;

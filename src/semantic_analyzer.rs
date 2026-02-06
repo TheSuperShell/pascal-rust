@@ -265,7 +265,7 @@ impl SemanticAnalyzer {
     fn visit_expr(&mut self, node: ExprRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let pos = tree.node_pos(NodeRef::ExprRef(node));
         let type_symbol = match tree.expr_pool.get(node) {
-            Expr::LiteralBool(_) => Ok(TypeSymbol::Boolean),
+            Expr::LiteralBool(_) => Ok::<TypeSymbol, Error>(TypeSymbol::Boolean),
             Expr::LiteralChar(_) => Ok(TypeSymbol::Char),
             Expr::LiteralInteger(_) => Ok(TypeSymbol::Integer),
             Expr::LiteralReal(_) => Ok(TypeSymbol::Real),
@@ -493,7 +493,7 @@ impl SemanticAnalyzer {
     fn visit_type(&mut self, node: TypeRef, tree: &Tree) -> Result<TypeSymbolRef, Error> {
         let pos = tree.node_pos(NodeRef::TypeRef(node));
         let type_symbol = match tree.type_pool.get(node) {
-            Type::Integer => Ok(TypeSymbol::Integer),
+            Type::Integer => Ok::<TypeSymbol, Error>(TypeSymbol::Integer),
             Type::Real => Ok(TypeSymbol::Real),
             Type::Boolean => Ok(TypeSymbol::Boolean),
             Type::Char => Ok(TypeSymbol::Char),

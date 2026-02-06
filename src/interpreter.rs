@@ -8,7 +8,7 @@ use itertools::Itertools;
 
 use crate::{
     error::Error,
-    parser::{Condition, Decl, Expr, ExprRef, Stmt, StmtRef, Tree, Type, TypeRef},
+    parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
     symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
     tokens::{Token, TokenType},
@@ -35,14 +35,12 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn ordinal_rank(&self) -> Result<i64, Error> {
+    pub fn ordinal_rank(&self) -> i64 {
         match self {
-            Value::Integer(i) => Ok(*i),
-            Value::Char(c) => Ok(*c as i64),
-            Value::Boolean(b) => Ok(*b as i64),
-            _ => Err(Error::RuntimeError {
-                msg: format!("ordinal rank is not supported for {:?}", self),
-            }),
+            Value::Integer(i) => *i,
+            Value::Char(c) => *c as i64,
+            Value::Boolean(b) => *b as i64,
+            _ => unreachable!(),
         }
     }
 }
@@ -141,8 +139,8 @@ impl ActivationRecord {
 pub trait BuiltinCtx {
     type Value;
 
-    fn read<'a>(&'a self, builtin_input: &'a LValue) -> Result<&'a Self::Value, Error>;
-    fn write(&mut self, builtin_input: &LValue, value: Value) -> Result<(), Error>;
+    fn read<'a>(&'a self, builtin_input: &'a LValue) -> &'a Self::Value;
+    fn write(&mut self, builtin_input: &LValue, value: Value);
 }
 
 pub struct CallStack {
@@ -191,59 +189,31 @@ impl CallStack {
 impl BuiltinCtx for CallStack {
     type Value = Value;
 
-    fn read<'a>(&'a self, builtin_input: &'a LValue) -> Result<&'a Self::Value, Error> {
+    fn read<'a>(&'a self, builtin_input: &'a LValue) -> &'a Self::Value {
         match builtin_input {
-            LValue::Value(v) => Ok(v),
-            LValue::Ref { name } => self.lookup_value(name).ok_or(Error::RuntimeError {
-                msg: "name was not found".into(),
-            }),
-            LValue::ArrIndex { name, index } => self
-                .lookup_value(name)
-                .ok_or(Error::RuntimeError {
-                    msg: "name was not found".into(),
-                })
-                .and_then(|v| match v {
-                    Value::Array(a) => a[*index].as_deref().ok_or(Error::RuntimeError {
-                        msg: "value is None".into(),
-                    }),
-                    _ => Err(Error::RuntimeError {
-                        msg: "value should be array".into(),
-                    }),
-                }),
+            LValue::Value(v) => v,
+            LValue::Ref { name } => self.lookup_value(name).unwrap(),
+            LValue::ArrIndex { name, index } => match self.lookup_value(name).unwrap() {
+                Value::Array(a) => a[*index].as_deref().unwrap(),
+                _ => unreachable!(),
+            },
         }
     }
 
-    fn write(&mut self, builtin_input: &LValue, value: Self::Value) -> Result<(), Error> {
+    fn write(&mut self, builtin_input: &LValue, value: Self::Value) {
         match builtin_input {
-            LValue::Value(_) => Err(Error::RuntimeError {
-                msg: "cannot write to a value".into(),
-            }),
+            LValue::Value(_) => panic!(),
             LValue::Ref { name } => {
-                self.lookup_mut(name)
-                    .ok_or(Error::RuntimeError {
-                        msg: "name not found".into(),
-                    })?
-                    .set(value);
-                Ok(())
+                self.lookup_mut(name).unwrap().set(value);
             }
-            LValue::ArrIndex { name, index } => self
-                .lookup_mut(name)
-                .ok_or(Error::RuntimeError {
-                    msg: "name not found".into(),
-                })?
-                .get_mut()
-                .ok_or(Error::RuntimeError {
-                    msg: "var is not defined".into(),
-                })
-                .map(|v| match v {
+            LValue::ArrIndex { name, index } => {
+                match self.lookup_mut(name).unwrap().get_mut().unwrap() {
                     Value::Array(a) => {
                         a[*index] = Some(Box::new(value));
-                        Ok(())
                     }
-                    _ => Err(Error::RuntimeError {
-                        msg: "var is not array".into(),
-                    }),
-                })?,
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 }
@@ -326,7 +296,7 @@ impl Interpreter {
                                 .get(*self.type_range_map.get(index_type).unwrap()),
                             _ => panic!(),
                         };
-                        let index_value = range_symbol.get_index(&index_value)?;
+                        let index_value = range_symbol.get_index(&index_value);
                         match tree.expr_pool.get(*base) {
                             Expr::Var { name } => self.call_stack.write(
                                 &LValue::ArrIndex {
@@ -334,7 +304,7 @@ impl Interpreter {
                                     index: index_value,
                                 },
                                 val,
-                            )?,
+                            ),
                             _ => panic!(),
                         };
                     }
@@ -414,9 +384,9 @@ impl Interpreter {
                         name: var.lexem(tree.source_code),
                     },
                     init_val.clone(),
-                )?;
-                let mut i = init_val.ordinal_rank()?;
-                while i != end_val.ordinal_rank()? {
+                );
+                let mut i = init_val.ordinal_rank();
+                while i != end_val.ordinal_rank() {
                     let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
                     match cr {
                         ControlFlow::Continue(()) => {}
@@ -427,12 +397,13 @@ impl Interpreter {
                         }
                     }
                     i += 1;
+                    let result = type_symbol.oridnal_value(i);
                     self.call_stack.write(
                         &LValue::Ref {
                             name: var.lexem(tree.source_code),
                         },
-                        type_symbol.oridnal_value(i)?,
-                    )?;
+                        result,
+                    );
                 }
                 Ok(ControlFlow::Continue(()))
             }
@@ -485,6 +456,7 @@ impl Interpreter {
                         .map(|v| v.clone())
                         .ok_or(Error::RuntimeError {
                             msg: format!("undefined var {}", name),
+                            pos: tree.node_pos(NodeRef::ExprRef(expr)),
                         }),
                     VarSymbol::Const { value } => Ok(value.clone().into()),
                 }
@@ -518,7 +490,7 @@ impl Interpreter {
                     Expr::Var { name } => name,
                     _ => unreachable!(),
                 };
-                let index_value = index_value.ordinal_rank()?;
+                let index_value = index_value.ordinal_rank();
                 let arr_value = self
                     .call_stack
                     .lookup_value(var_name.lexem(tree.source_code))
@@ -529,19 +501,14 @@ impl Interpreter {
                         .read(&LValue::ArrIndex {
                             name: var_name.lexem(tree.source_code),
                             index: index_value as usize,
-                        })?
+                        })
                         .clone()),
                     _ => todo!(),
                 }
             }
-            Expr::Call { name, args } => {
-                match self.visit_callable(&expr, name, args, tree, semantic_metadata)? {
-                    Some(v) => Ok(v),
-                    None => Err(Error::RuntimeError {
-                        msg: "function returned none".to_string(),
-                    }),
-                }
-            }
+            Expr::Call { name, args } => self
+                .visit_callable(&expr, name, args, tree, semantic_metadata)
+                .map(|v| v.unwrap()),
         }
     }
 
@@ -709,7 +676,7 @@ impl Interpreter {
                 self.type_range_map.insert(
                     *semantic_metadata.type_type_map.get(&type_node).unwrap(),
                     self.range_symbols
-                        .alloc(RangeSymbol::new(&init_val, &end_val)?),
+                        .alloc(RangeSymbol::new(&init_val, &end_val)),
                 );
                 Ok(())
             }
