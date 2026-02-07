@@ -177,7 +177,7 @@ impl<'a> Lexer<'a> {
             _ => Err(Error::LexerError {
                 msg: format!("unexpected character {:?}", self.current_char),
                 pos: self.pos,
-                error_code: ErrorCode::UnkownCharacter,
+                error_code: ErrorCode::UnknownCharacter,
             }),
         }
     }
@@ -313,5 +313,20 @@ mod tests {
             let token_type = result.unwrap();
             assert_eq!(token_type.token_type(), &e);
         }
+    }
+
+    #[test]
+    fn test_unexpected_token() {
+        const SOURCE_CODE: &'static str = "@";
+        let result = Lexer::new(SOURCE_CODE).next();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err,
+            Error::LexerError {
+                error_code: ErrorCode::UnknownCharacter,
+                ..
+            }
+        ))
     }
 }

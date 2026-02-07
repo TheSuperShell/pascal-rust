@@ -2,10 +2,10 @@ use err_code::ErrorCode;
 
 use crate::utils::Pos;
 
-#[derive(ErrorCode, Debug)]
+#[derive(ErrorCode, Debug, PartialEq)]
 pub enum ErrorCode {
     #[error_code(100)]
-    UnkownCharacter,
+    UnknownCharacter,
 
     #[error_code(201)]
     UnexpectedToken,
