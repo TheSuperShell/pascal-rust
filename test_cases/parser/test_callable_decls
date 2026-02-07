@@ -1,0 +1,19 @@
+Program n
+Callable(proc)
+  Var(a)
+    Type(Integer)
+  Var(b)
+    Type(Integer)
+  Var(c)
+    Type(Real)
+Begin
+  NoOp
+Callable(func)
+  Type(Real)
+  Var(z)
+    Type(Char)
+Begin
+  Exit
+    LitReal(10.3)
+Begin
+  NoOp

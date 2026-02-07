@@ -1,0 +1,3 @@
+PROGRAM n;
+BEGIN
+END.

@@ -1314,12 +1314,14 @@ mod tests {
         };
     }
 
-    macro_rules! test_succ {
-        ($($name:ident($source:literal,$result:literal),)*) => {
+    macro_rules! test_succ_file {
+        ($($name:ident,)*) => {
             $(
                 #[test]
                 fn $name() {
-                    let lexer = Lexer::new($source);
+                    let p = "test_cases\\parser\\".to_string() + stringify!($name) + ".pas";
+                    let source_code = std::fs::read_to_string(p).unwrap();
+                    let lexer = Lexer::new(&source_code);
                     let parser = Parser::new(lexer);
                     assert!(parser.is_ok());
                     let parser = parser.unwrap();
@@ -1327,9 +1329,10 @@ mod tests {
                     println!("{:?}", tree);
                     assert!(tree.is_ok());
                     let tree = tree.unwrap();
+                    let result = std::fs::read_to_string("test_cases\\parser\\".to_string() + stringify!($name)).unwrap().replace("\r", "");
                     assert_eq!(
                         &format!("{tree}"),
-                        $result,
+                        &result,
                     )
                 }
 
@@ -1337,57 +1340,10 @@ mod tests {
         };
     }
 
-    test_succ! {
-        test_empty_program(
-            "PROGRAM n; BEGIN END.",
-            "Program n\n\nBegin\n  NoOp"
-        ),
-        test_decls(
-            "PROGRAM n; const pi = 3.14; var a, b: integer; c: real; var z: char; type zz = z; BEGIN END.",
-"Program n
-Const
-  Var(pi)
-    LitReal(3.14)
-Var
-  Var(a)
-    Type(Integer)
-Var
-  Var(b)
-    Type(Integer)
-Var
-  Var(c)
-    Type(Real)
-Var
-  Var(z)
-    Type(Char)
-Type
-  Var(zz)
-    TypeAlias(z)
-Begin
-  NoOp"
-        ),
-        test_callable_decls(
-            "PROGRAM n; procedure proc(a, b: integer; c: real) BEGIN END; function func(z: char): real; Begin exit(10.3) end; BEGIN END.",
-"Program n
-Callable(proc)
-  Var(a)
-    Type(Integer)
-  Var(b)
-    Type(Integer)
-  Var(c)
-    Type(Real)
-Begin
-  NoOp
-Callable(func)
-  Type(Real)
-  Var(z)
-    Type(Char)
-Begin
-  Exit
-    LitReal(10.3)
-Begin
-  NoOp"
-        ),
+    test_succ_file! {
+        test_empty_program,
+        test_decls,
+        test_callable_decls,
     }
 
     test_err! {
