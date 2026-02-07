@@ -1,0 +1,30 @@
+Program n
+
+Begin
+  If
+    BinOp
+      LitInt(10)
+      GreaterThen
+      LitInt(3)
+  Then
+    Assign
+      Var(a)
+      LitBool(true)
+  ElseIf
+    BinOp
+      LitInt(10)
+      NotEqual
+      LitInt(3)
+  Then
+    Assign
+      Var(b)
+      LitBool(true)
+  Else
+    Begin
+      Assign
+        Var(b)
+        LitBool(false)
+      Assign
+        Var(a)
+        Var(b)
+      NoOp

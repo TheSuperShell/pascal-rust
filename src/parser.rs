@@ -1344,6 +1344,8 @@ mod tests {
         test_empty_program,
         test_decls,
         test_callable_decls,
+        test_binary,
+        test_if_stmt,
     }
 
     test_err! {
