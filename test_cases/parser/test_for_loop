@@ -1,0 +1,10 @@
+Program n
+
+Begin
+  For(i)
+    LitInt(0)
+    To
+    LitInt(100)
+  Do
+    Call(writeln)
+      Var(i)

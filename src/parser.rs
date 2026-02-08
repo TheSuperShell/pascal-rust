@@ -1346,6 +1346,8 @@ mod tests {
         test_callable_decls,
         test_binary,
         test_if_stmt,
+        test_while_loop,
+        test_for_loop,
     }
 
     test_err! {

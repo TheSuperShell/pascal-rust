@@ -1,0 +1,18 @@
+Program n
+
+Begin
+  While
+    BinOp
+      Var(x)
+      LessThen
+      LitInt(10)
+  Do
+    Begin
+      Assign
+        Var(x)
+        BinOp
+          Var(x)
+          Minus
+          LitInt(1)
+      Call(writeln)
+        Var(x)
