@@ -1,4 +1,7 @@
+use std::iter::once;
+
 use err_code::ErrorCode;
+use itertools::Itertools;
 
 use crate::utils::Pos;
 
@@ -82,18 +85,51 @@ pub enum Error {
         function_name: &'static str,
         msg: String,
     },
+    Errors(Vec<Box<Error>>),
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+pub struct Errors(Vec<Error>);
+
+impl From<Vec<Error>> for Errors {
+    fn from(value: Vec<Error>) -> Self {
+        Errors(value)
+    }
+}
+
+impl Errors {
+    pub fn add(self, other: Result<(), Error>) -> Errors {
+        match other {
+            Err(Error::Errors(errs)) => Errors(
+                self.0
+                    .into_iter()
+                    .chain(errs.into_iter().map(|v| *v))
+                    .collect(),
+            ),
+            Err(e) => Errors(self.0.into_iter().chain(once(e)).collect()),
+            Ok(()) => self,
+        }
+    }
+}
+
+impl Into<Result<(), Error>> for Errors {
+    fn into(self) -> Result<(), Error> {
+        match self.0.len() {
+            0 => Ok(()),
+            1 => Err(self.0.into_iter().last().unwrap()),
+            _ => Err(Error::Errors(self.0.into_iter().map(Box::new).collect())),
+        }
+    }
+}
+
+impl Error {
+    fn to_string(&self) -> String {
         match self {
             Error::LexerError {
                 msg,
                 pos,
                 error_code,
             } => {
-                write!(
-                    f,
+                format!(
                     "Lexer Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -107,8 +143,7 @@ impl std::fmt::Display for Error {
                 pos,
                 error_code,
             } => {
-                write!(
-                    f,
+                format!(
                     "Parser Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -122,8 +157,7 @@ impl std::fmt::Display for Error {
                 pos,
                 error_code,
             } => {
-                write!(
-                    f,
+                format!(
                     "Semantic Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -133,17 +167,25 @@ impl std::fmt::Display for Error {
                 )
             }
             Error::RuntimeError { msg, pos } => {
-                write!(
-                    f,
-                    "Runtime Error at row {} col {}: {}",
-                    pos.row, pos.col, msg
-                )
+                format!("Runtime Error at row {} col {}: {}", pos.row, pos.col, msg)
             }
             Error::BuiltinFunctionError { function_name, msg } => {
-                write!(f, "Builtin function {function_name} error: {msg}")
+                format!("Builtin function {function_name} error: {msg}")
             }
-            Error::IoError(e) => e.fmt(f),
+            Error::IoError(e) => e.to_string(),
+            Error::Errors(errs) => {
+                format!(
+                    "Errors:\n{}",
+                    errs.iter().map(|v| v.to_string()).join(",\n")
+                )
+            }
         }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
     }
 }
 

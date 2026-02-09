@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    error::{Error, ErrorCode},
+    error::{Error, ErrorCode, Errors},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
         CallableSymbol, CallableSymbolRef, CallableType, ConstValue, ParamInputMode, ParamMode,
@@ -85,11 +85,14 @@ impl SemanticAnalyzer {
                 declarations,
                 statements,
             } => {
-                declarations
+                let errs: Errors = declarations
                     .iter()
                     .map(|d| self.visit_declaraction(d, tree))
-                    .collect::<Result<(), Error>>()?;
-                self.visit_stmt(*statements, tree)
+                    .filter_map(Result::err)
+                    .collect::<Vec<Error>>()
+                    .into();
+                let stmt_result = self.visit_stmt(*statements, tree);
+                errs.add(stmt_result).into()
             }
             Stmt::Assign { left, right } => {
                 let left_expr = tree.expr_pool.get(*left);
@@ -156,10 +159,15 @@ impl SemanticAnalyzer {
                     _ => panic!("unreachable"),
                 }
             }
-            Stmt::Compound(stmts) => stmts
-                .iter()
-                .map(|s| self.visit_stmt(*s, tree))
-                .collect::<Result<(), Error>>(),
+            Stmt::Compound(stmts) => {
+                let errs: Errors = stmts
+                    .iter()
+                    .map(|s| self.visit_stmt(*s, tree))
+                    .filter_map(Result::err)
+                    .collect::<Vec<Error>>()
+                    .into();
+                errs.into()
+            }
             Stmt::Exit(v) => {
                 if let Some(expr_ref) = v {
                     self.visit_expr(*expr_ref, tree)?;
@@ -847,32 +855,40 @@ impl SemanticAnalyzer {
                 }
             }
         };
-        let param_inp_iter = callable_symbol
+        let param_results: Errors = callable_symbol
             .params
             .iter()
             .cycle()
             .take(args.len())
-            .zip(arg_expr);
-        for ((p, _), expr_type) in param_inp_iter {
-            let expr_type = self.semantic_metadata.types.get(expr_type);
-            let var_symbol = self.semantic_metadata.vars.get(*p);
-            let param_type = match var_symbol {
-                VarSymbol::Var {
-                    name: _,
-                    type_symbol,
-                } => self.semantic_metadata.types.get(*type_symbol),
-                _ => panic!("unreachable"),
-            };
-            if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
-                return Err(Error::SemanticError {
-                    msg: format!(
-                        "parameter should be of type {:?}, got {:?}",
-                        param_type, expr_type
-                    ),
-                    pos,
-                    error_code: ErrorCode::IncorrectType,
-                });
-            }
+            .zip(arg_expr)
+            .map(|((p, _), expr_type)| {
+                let expr_type = self.semantic_metadata.types.get(expr_type);
+                let var_symbol = self.semantic_metadata.vars.get(*p);
+                let param_type = match var_symbol {
+                    VarSymbol::Var {
+                        name: _,
+                        type_symbol,
+                    } => self.semantic_metadata.types.get(*type_symbol),
+                    _ => panic!("unreachable"),
+                };
+                if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
+                    return Err(Error::SemanticError {
+                        msg: format!(
+                            "parameter should be of type {:?}, got {:?}",
+                            param_type, expr_type
+                        ),
+                        pos,
+                        error_code: ErrorCode::IncorrectType,
+                    });
+                };
+                Ok(())
+            })
+            .filter_map(Result::err)
+            .collect::<Vec<Error>>()
+            .into();
+        match param_results.into() {
+            Err(e) => return Err(e),
+            Ok(()) => (),
         }
         self.semantic_metadata
             .callable_symbols
