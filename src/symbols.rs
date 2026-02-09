@@ -118,14 +118,16 @@ pub enum LValue<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum CallableBody {
-    BlockAST(StmtRef),
-    Func(
-        fn(
+pub enum CallableType {
+    Custom {
+        statement: StmtRef,
+    },
+    Builtin {
+        func: fn(
             ctx: &mut dyn BuiltinCtx<Value = Value>,
             args: &[&LValue],
         ) -> Result<Option<Value>, Error>,
-    ),
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -135,10 +137,17 @@ pub enum ParamMode {
 }
 
 #[derive(Debug, Clone)]
+pub enum ParamInputMode {
+    Seq,
+    Repeat,
+}
+
+#[derive(Debug, Clone)]
 pub struct CallableSymbol {
     pub name: String,
     pub params: Vec<(VarSymbolRef, ParamMode)>,
-    pub body: CallableBody,
+    pub param_input_mode: ParamInputMode,
+    pub body: CallableType,
     pub return_type: Option<TypeSymbolRef>,
 }
 

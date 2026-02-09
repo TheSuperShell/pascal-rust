@@ -10,7 +10,7 @@ use crate::{
     error::Error,
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
-    symbols::{CallableBody, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
+    symbols::{CallableType, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
     tokens::{Token, TokenType},
     utils::NodePool,
 };
@@ -51,7 +51,7 @@ impl ToString for Value {
             Value::Integer(v) => format!("{v}"),
             Value::Real(v) => format!("{v}"),
             Value::Boolean(v) => format!("{v}"),
-            Value::String(v) => v.into(),
+            Value::String(v) => v.to_string(),
             Value::Char(c) => c.to_string(),
             Value::Array(vals) => format!(
                 "[{}]",
@@ -592,13 +592,16 @@ impl Interpreter {
                 .get(node)
                 .expect("call should exist"),
         );
+        let params = symbol.params.iter().cycle().take(args.len()).zip(args);
         match symbol.body {
-            CallableBody::BlockAST(node) => {
+            CallableType::Custom {
+                statement: node, ..
+            } => {
                 let mut ar = ActivationRecord::new(
                     name.lexem(tree.source_code),
                     self.call_stack.current_nesting() + 1,
                 );
-                for ((inp, mode), arg) in symbol.params.iter().zip(args) {
+                for ((inp, mode), arg) in params {
                     match mode {
                         ParamMode::Var => {
                             let var_symbol = semantic_metadata.vars.get(*inp);
@@ -637,11 +640,8 @@ impl Interpreter {
                 self.call_stack.pop();
                 Ok(result)
             }
-            CallableBody::Func(f) => {
-                let values: Vec<LValue> = symbol
-                    .params
-                    .iter()
-                    .zip(args)
+            CallableType::Builtin { func: f } => {
+                let values: Vec<LValue> = params
                     .map(|((_, m), a)| match m {
                         ParamMode::Var => self
                             .visit_expr(*a, tree, semantic_metadata)

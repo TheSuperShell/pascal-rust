@@ -4,8 +4,8 @@ use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
     symbols::{
-        CallableBody, CallableSymbol, CallableSymbolRef, LValue, ParamMode, SymbolTable,
-        TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
+        CallableSymbol, CallableSymbolRef, CallableType, LValue, ParamInputMode, ParamMode,
+        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     utils::NodePool,
 };
@@ -17,7 +17,7 @@ fn writeln(
     args.iter()
         .map(|v| match v {
             LValue::Value(v) => {
-                println!("{}", v.to_string());
+                print!("{}", v.to_string());
                 Ok(())
             }
             _ => Err(Error::BuiltinFunctionError {
@@ -26,6 +26,7 @@ fn writeln(
             }),
         })
         .collect::<Result<(), Error>>()?;
+    print!("\n");
     Ok(None)
 }
 
@@ -66,7 +67,8 @@ impl SymbolTable {
                 }),
                 ParamMode::Var,
             )],
-            body: CallableBody::Func(writeln),
+            param_input_mode: ParamInputMode::Repeat,
+            body: CallableType::Builtin { func: writeln },
         });
         st.define_callable("writeln", writeln);
         let readln = callables.alloc(CallableSymbol {
@@ -79,7 +81,8 @@ impl SymbolTable {
                 }),
                 ParamMode::Ref,
             )],
-            body: CallableBody::Func(readln),
+            param_input_mode: ParamInputMode::Seq,
+            body: CallableType::Builtin { func: readln },
         });
         st.define_callable("readln", readln);
         st

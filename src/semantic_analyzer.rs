@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
-use itertools::{EitherOrBoth, Itertools};
-
 use crate::{
     error::{Error, ErrorCode},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
-        CallableSymbol, CallableSymbolRef, ConstValue, ParamMode, SymbolTable, TypeSymbol,
-        TypeSymbolRef, VarSymbol, VarSymbolRef,
+        CallableSymbol, CallableSymbolRef, CallableType, ConstValue, ParamInputMode, ParamMode,
+        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     tokens::{Token, TokenType},
     utils::NodePool,
@@ -667,9 +665,10 @@ impl SemanticAnalyzer {
                 };
                 let callable_symbol = CallableSymbol {
                     name: name.lexem(tree.source_code).into(),
-                    params: params_vec,
+                    params: params_vec.clone(),
+                    param_input_mode: ParamInputMode::Seq,
                     return_type,
-                    body: crate::symbols::CallableBody::BlockAST(*block),
+                    body: CallableType::Custom { statement: *block },
                 };
                 let callable_symbol_ref = self.semantic_metadata.callables.alloc(callable_symbol);
                 self.current_scope
@@ -819,30 +818,9 @@ impl SemanticAnalyzer {
         let callable_symbol = self.semantic_metadata.callables.get(callable_symbol_ref);
         let return_type = callable_symbol.return_type;
         let arg_count = arg_expr.len();
-        for r in callable_symbol.params.iter().zip_longest(arg_expr) {
-            match r {
-                EitherOrBoth::Both((p, _), expr_type) => {
-                    let expr_type = self.semantic_metadata.types.get(expr_type);
-                    let var_symbol = self.semantic_metadata.vars.get(*p);
-                    let param_type = match var_symbol {
-                        VarSymbol::Var {
-                            name: _,
-                            type_symbol,
-                        } => self.semantic_metadata.types.get(*type_symbol),
-                        _ => panic!("unreachable"),
-                    };
-                    if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
-                        return Err(Error::SemanticError {
-                            msg: format!(
-                                "parameter should be of type {:?}, got {:?}",
-                                param_type, expr_type
-                            ),
-                            pos,
-                            error_code: ErrorCode::IncorrectType,
-                        });
-                    }
-                }
-                _ => {
+        match callable_symbol.param_input_mode {
+            ParamInputMode::Seq => {
+                if callable_symbol.params.len() != args.len() {
                     return Err(Error::SemanticError {
                         msg: format!(
                             "function {} expected {} arguments, but for {}",
@@ -854,6 +832,46 @@ impl SemanticAnalyzer {
                         error_code: ErrorCode::IncorrectNumberOfArguments,
                     });
                 }
+            }
+            ParamInputMode::Repeat => {
+                if arg_count % callable_symbol.params.len() != 0 {
+                    return Err(Error::SemanticError {
+                        msg: format!(
+                            "function {} accepts {} arguements any amount of times, but number of provided arguments does not fit",
+                            name.lexem(tree.source_code),
+                            callable_symbol.params.len()
+                        ),
+                        pos,
+                        error_code: ErrorCode::IncorrectNumberOfArguments,
+                    });
+                }
+            }
+        };
+        let param_inp_iter = callable_symbol
+            .params
+            .iter()
+            .cycle()
+            .take(args.len())
+            .zip(arg_expr);
+        for ((p, _), expr_type) in param_inp_iter {
+            let expr_type = self.semantic_metadata.types.get(expr_type);
+            let var_symbol = self.semantic_metadata.vars.get(*p);
+            let param_type = match var_symbol {
+                VarSymbol::Var {
+                    name: _,
+                    type_symbol,
+                } => self.semantic_metadata.types.get(*type_symbol),
+                _ => panic!("unreachable"),
+            };
+            if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
+                return Err(Error::SemanticError {
+                    msg: format!(
+                        "parameter should be of type {:?}, got {:?}",
+                        param_type, expr_type
+                    ),
+                    pos,
+                    error_code: ErrorCode::IncorrectType,
+                });
             }
         }
         self.semantic_metadata

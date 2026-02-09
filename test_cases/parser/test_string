@@ -1,0 +1,6 @@
+Program n
+
+Begin
+  Assign
+    Var(a)
+    LitString("Hello, World!")

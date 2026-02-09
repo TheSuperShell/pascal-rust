@@ -316,6 +316,22 @@ mod tests {
     }
 
     #[test]
+    fn test_string_token() {
+        const SOURCE_CODE: &'static str = "a := 'Hello, World!'";
+        let mut result = Lexer::new(SOURCE_CODE);
+        result.next().unwrap();
+        result.next().unwrap();
+        let str_token = result.next();
+        assert!(str_token.is_ok());
+        let str_token = str_token.unwrap();
+        assert_eq!(
+            str_token,
+            Token::new(TokenType::StringConst, 6, 13, Pos { row: 1, col: 7 })
+        );
+        assert_eq!(str_token.lexem(SOURCE_CODE), "Hello, World!")
+    }
+
+    #[test]
     fn test_unexpected_token() {
         const SOURCE_CODE: &'static str = "@";
         let result = Lexer::new(SOURCE_CODE).next();

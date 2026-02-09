@@ -967,7 +967,7 @@ impl<'a> Parser<'a> {
             TokenType::RealConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralReal(v), token.span())),
             TokenType::StringConst => Ok(self
                 .expr_pool
-                .alloc(Expr::LiteralString(self.current_token), token.span())),
+                .alloc(Expr::LiteralString(token), token.span())),
             TokenType::CharConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralChar(v), token.span())),
             TokenType::BooleanConst(v) => {
                 Ok(self.expr_pool.alloc(Expr::LiteralBool(v), token.span()))
@@ -1348,6 +1348,7 @@ mod tests {
         test_if_stmt,
         test_while_loop,
         test_for_loop,
+        test_string,
     }
 
     test_err! {

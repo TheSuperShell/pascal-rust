@@ -8,5 +8,5 @@ program fib;
     var i: integer;
 begin
     for i := 0 to 25 do
-        writeln(fib(i));
+        writeln('fib(', i, ') = ', fib(i));
 end.
