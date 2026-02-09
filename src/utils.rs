@@ -122,9 +122,11 @@ where
     pub fn span(&self, id: Ref) -> Span {
         self.spans[id.into()]
     }
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.items.len()
     }
+    #[cfg(test)]
     pub fn ids(&self) -> impl Iterator<Item = Ref> {
         (0..self.len()).map(|id| Ref::from(id))
     }

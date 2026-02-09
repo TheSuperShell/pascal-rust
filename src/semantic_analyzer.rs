@@ -60,20 +60,6 @@ impl SemanticAnalyzer {
 
     pub fn analyze(mut self, tree: &Tree) -> Result<SemanticMetadata, Error> {
         self.visit_stmt(tree.program, tree)?;
-        let missing: Vec<&Expr> = tree
-            .expr_pool
-            .ids()
-            .filter(|k| !self.semantic_metadata.expr_type_map.contains_key(k))
-            .map(|id| tree.expr_pool.get(id))
-            .collect();
-        if !(tree.expr_pool.len() == self.semantic_metadata.expr_type_map.len()
-            && missing.len() == 0)
-        {
-            println!(
-                "WARNING: not all of the expressions were assigned a type:\n{:#?}",
-                missing
-            )
-        }
         Ok(self.semantic_metadata)
     }
 
@@ -1034,6 +1020,34 @@ mod tests {
                 }
             )+
         };
+    }
+
+    macro_rules! test_succ {
+        ($($name:ident,)+) => {
+            $(
+                #[test]
+                fn $name() {
+                    let source_path = "test_cases\\semantic_analyzer\\".to_string() + &stringify!($name) + ".pas";
+                    let source_code = std::fs::read_to_string(&source_path).expect(&format!("file {source_path} does not exist"));
+                    let lexer = Lexer::new(&source_code);
+                    let tree = Parser::new(lexer).unwrap().parse().unwrap();
+                    let result = SemanticAnalyzer::new().analyze(&tree);
+                    assert!(result.is_ok());
+                    let semantic_metadata = result.unwrap();
+                    let missing: Vec<&Expr> = tree
+                        .expr_pool
+                        .ids()
+                        .filter(|k| !semantic_metadata.expr_type_map.contains_key(k))
+                        .map(|id| tree.expr_pool.get(id))
+                        .collect();
+                    assert_eq!(missing, Vec::<&Expr>::new());
+                }
+            )+
+        };
+    }
+
+    test_succ! {
+        test_base,
     }
 
     test_fail! {
