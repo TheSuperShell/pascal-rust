@@ -96,22 +96,32 @@ impl SemanticAnalyzer {
             }
             Stmt::Assign { left, right } => {
                 let left_expr = tree.expr_pool.get(*left);
+                let left_type_ref = self.visit_expr(*left, tree)?;
                 match left_expr {
-                    Expr::Var { name: _ } => (),
+                    Expr::Var { name: _ } => {
+                        let var_symbol = self
+                            .semantic_metadata
+                            .var_symbols
+                            .get(left)
+                            .expect("variable should have a symbol");
+                        match self.semantic_metadata.vars.get(*var_symbol) {
+                            VarSymbol::Var { .. } => (),
+                            VarSymbol::Const { .. } => {
+                                return Err(Error::SemanticError {
+                                    msg: format!("cannot assign to const {:?}", var_symbol),
+                                    pos,
+                                    error_code: ErrorCode::AssignmentError,
+                                });
+                            }
+                        }
+                    }
                     Expr::Index {
                         base: _,
                         index_value: _,
                         other_indicies: _,
                     } => (),
-                    _ => {
-                        return Err(Error::SemanticError {
-                            msg: format!("can only assign to variable, {:?}", left_expr),
-                            pos,
-                            error_code: ErrorCode::AssignmentError,
-                        });
-                    }
+                    _ => unreachable!(),
                 }
-                let left_type_ref = self.visit_expr(*left, tree)?;
                 let right_type_ref = self.visit_expr(*right, tree)?;
                 let left_type = self.semantic_metadata.types.get(left_type_ref);
                 let right_type = self.semantic_metadata.types.get(right_type_ref);
@@ -328,7 +338,7 @@ impl SemanticAnalyzer {
                                     op, left_type, right_type
                                 ),
                                 pos,
-                                error_code: ErrorCode::UnsupportedBinaryOperator,
+                                error_code: ErrorCode::UnsupportedBinaryOperation,
                             }),
                         }
                     }
@@ -342,7 +352,7 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: ErrorCode::UnsupportedBinaryOperator,
+                            error_code: ErrorCode::UnsupportedBinaryOperation,
                         }),
                     },
                     TokenType::Plus => match (&left_type, &right_type) {
@@ -360,7 +370,7 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: ErrorCode::UnsupportedBinaryOperator,
+                            error_code: ErrorCode::UnsupportedBinaryOperation,
                         }),
                     },
                     TokenType::GreaterThen
@@ -377,7 +387,7 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: ErrorCode::UnsupportedBinaryOperator,
+                            error_code: ErrorCode::UnsupportedBinaryOperation,
                         }),
                     },
                     TokenType::Equal | TokenType::NotEqual => Ok(TypeSymbol::Boolean),
@@ -389,14 +399,10 @@ impl SemanticAnalyzer {
                                 left_type, right_type
                             ),
                             pos,
-                            error_code: ErrorCode::UnsupportedBinaryOperator,
+                            error_code: ErrorCode::UnsupportedBinaryOperation,
                         }),
                     },
-                    _ => Err(Error::SemanticError {
-                        msg: format!("unsupported binary operator {:?}", op),
-                        pos,
-                        error_code: ErrorCode::UnsupportedBinaryOperator,
-                    }),
+                    _ => unreachable!(),
                 }?;
                 Ok(type_symbol)
             }
@@ -526,17 +532,6 @@ impl SemanticAnalyzer {
                 element_type,
             } => {
                 let index_type_ref = self.visit_type(*index_type, tree)?;
-                let index_type = self.semantic_metadata.types.get(index_type_ref);
-                match index_type {
-                    TypeSymbol::Range(_) => (),
-                    _ => {
-                        return Err(Error::SemanticError {
-                            msg: format!("array index type should be range, got {:?}", index_type),
-                            pos,
-                            error_code: ErrorCode::IncorrectIndexType,
-                        });
-                    }
-                }
                 let element_type = self.visit_type(*element_type, tree)?;
                 Ok(TypeSymbol::Array {
                     index_type: index_type_ref,
@@ -591,13 +586,7 @@ impl SemanticAnalyzer {
                 let var_expr = tree.expr_pool.get(*var);
                 let var_name = match var_expr {
                     Expr::Var { name } => name,
-                    _ => {
-                        return Err(Error::SemanticError {
-                            msg: format!("expected variable, found {:?}", var_expr),
-                            pos: tree.node_pos(NodeRef::ExprRef(*var)),
-                            error_code: ErrorCode::ExpectedVar,
-                        });
-                    }
+                    _ => unreachable!(),
                 };
                 let literal_expr = tree.expr_pool.get(*literal);
                 let const_type = match literal_expr {
@@ -606,13 +595,7 @@ impl SemanticAnalyzer {
                     Expr::LiteralReal(v) => ConstValue::Real(*v),
                     Expr::LiteralString(v) => ConstValue::String(v.lexem(tree.source_code).into()),
                     Expr::LiteralChar(c) => ConstValue::Char(*c),
-                    _ => {
-                        return Err(Error::SemanticError {
-                            msg: format!("expected literal for const, got {:?}", literal_expr),
-                            pos: tree.node_pos(NodeRef::ExprRef(*literal)),
-                            error_code: ErrorCode::ExpectedLiteral,
-                        });
-                    }
+                    _ => unreachable!(),
                 };
                 let const_symbol = self
                     .semantic_metadata
@@ -642,13 +625,7 @@ impl SemanticAnalyzer {
                     let var_expr = tree.expr_pool.get(param.var);
                     let var_name = match var_expr {
                         Expr::Var { name } => name,
-                        _ => {
-                            return Err(Error::SemanticError {
-                                msg: format!("expected var, got {:?}", var_expr),
-                                pos: tree.node_pos(NodeRef::ExprRef(param.var)),
-                                error_code: ErrorCode::ExpectedVar,
-                            });
-                        }
+                        _ => unreachable!(),
                     };
                     let type_symbol_ref = self.visit_type(param.type_node, tree)?;
                     self.semantic_metadata
@@ -751,13 +728,7 @@ impl SemanticAnalyzer {
                 let var = tree.expr_pool.get(*var_ref);
                 let var_name = match var {
                     Expr::Var { name } => name,
-                    _ => {
-                        return Err(Error::SemanticError {
-                            msg: format!("expected var, got {:?}", var),
-                            pos: tree.node_pos(NodeRef::ExprRef(*var_ref)),
-                            error_code: ErrorCode::ExpectedVar,
-                        });
-                    }
+                    _ => unreachable!(),
                 };
                 if let Some(_) = self
                     .current_scope
@@ -831,7 +802,7 @@ impl SemanticAnalyzer {
                 if callable_symbol.params.len() != args.len() {
                     return Err(Error::SemanticError {
                         msg: format!(
-                            "function {} expected {} arguments, but for {}",
+                            "function {} expected {} arguments, but got {}",
                             name.lexem(tree.source_code),
                             callable_symbol.params.len(),
                             arg_count,
@@ -902,7 +873,7 @@ impl SemanticAnalyzer {
             return Err(Error::SemanticError {
                 msg: format!("condition should be boolean, got {:?}", type_symbol),
                 pos: tree.node_pos(NodeRef::ExprRef(cond.cond)),
-                error_code: ErrorCode::IncorrectType,
+                error_code: ErrorCode::ConditionNotBoolean,
             });
         };
         self.visit_stmt(cond.expr, tree)?;
@@ -948,11 +919,8 @@ fn analyze_function(
                         || in_assigned,
                     true,
                 )),
-                _ => Err(Error::SemanticError {
-                    msg: format!("expected var, got {:?}", left_expr),
-                    pos,
-                    error_code: ErrorCode::ExpectedVar,
-                }),
+                Expr::Index { .. } => Ok((in_assigned, true)),
+                _ => unreachable!(),
             }
         }
         Stmt::If {
@@ -1030,5 +998,111 @@ fn assinable(
         (TypeSymbol::Real, TypeSymbol::Integer) => true,
         (TypeSymbol::String, TypeSymbol::Char) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    macro_rules! test_fail {
+        ($($name:ident -> [$err:path $(, $other_err:path)* $(,)?],)+) => {
+            $(
+                #[test]
+                fn $name() {
+                    let source_path = "test_cases\\semantic_analyzer\\".to_string() + &stringify!($name) + ".pas";
+                    let source_code = std::fs::read_to_string(&source_path).expect(&format!("file {source_path} does not exist"));
+                    let lexer = Lexer::new(&source_code);
+                    let tree = Parser::new(lexer).unwrap().parse().unwrap();
+                    let result = SemanticAnalyzer::new().analyze(&tree);
+                    assert!(result.is_err());
+                    let err: Errors = result.unwrap_err().into();
+                    let mut expected = Vec::new();
+                    expected.push($err);
+                    $(
+                        expected.push($other_err);
+                    )*
+                    assert_eq!(expected.len(), err.len());
+                    for (exp, err) in expected.iter().zip(err.iter()) {
+                        match err {
+                            Error::SemanticError { error_code, ..} => assert_eq!(error_code, exp),
+                            _ => panic!("encountered non semantic error")
+                        }
+                    }
+                }
+            )+
+        };
+    }
+
+    test_fail! {
+        test_assign_fail -> [
+            ErrorCode::AssignmentError,
+            ErrorCode::AssignmentError,
+            ErrorCode::AssignmentError,
+        ],
+        test_assign_to_const -> [ErrorCode::AssignmentError],
+        test_break_continue_fail -> [
+            ErrorCode::BreakOutsideLoop,
+            ErrorCode::ContinueOutsideLoop,
+        ],
+        test_boolean_condition_fail -> [
+            ErrorCode::ConditionNotBoolean,
+            ErrorCode::ConditionNotBoolean,
+        ],
+        test_for_unkown_var_fail -> [
+            ErrorCode::UnkownVariable,
+            ErrorCode::ExpectedVar,
+        ],
+        test_for_limit_types_fail -> [
+            ErrorCode::IncompatibleTypes,
+            ErrorCode::IncompatibleTypes,
+        ],
+        test_var_unkown_fail -> [
+            ErrorCode::UnkownVariable
+        ],
+        test_bin_op_fail -> [
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+            ErrorCode::UnsupportedBinaryOperation,
+        ],
+        test_unary_op_fail -> [
+            ErrorCode::UnsupportedUnaryOperator,
+            ErrorCode::UnsupportedUnaryOperator,
+        ],
+        test_procedure_in_expr_fail -> [
+            ErrorCode::IncorrectUseOfProcedure
+        ],
+        test_index_fail -> [
+            ErrorCode::IncorrectIndexType,
+            ErrorCode::IncorrectIndexType,
+            ErrorCode::IncorrectBaseType,
+        ],
+        test_type_fail -> [
+            ErrorCode::UnkownType,
+            ErrorCode::IncompatibleTypes,
+            ErrorCode::RangeLimitsNotOrdinal,
+        ],
+        test_function_may_not_return_fail -> [
+            ErrorCode::FunctionMayNotReturn,
+            ErrorCode::FunctionMayNotReturn,
+        ],
+        test_already_defined_fail -> [
+            ErrorCode::DuplicateTypeDefinition,
+            ErrorCode::DuplicateVarDefinition,
+        ],
+        test_default_fail -> [ErrorCode::IncorrectType],
+        test_call_fail -> [
+            ErrorCode::UnkownCallable,
+            ErrorCode::IncorrectNumberOfArguments,
+            ErrorCode::IncorrectNumberOfArguments,
+            ErrorCode::IncorrectType,
+        ],
     }
 }

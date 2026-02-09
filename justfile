@@ -5,8 +5,8 @@ run:
     cargo run
 
 [group('testing')]
-test:
-    cargo test
+test filter="" $RUST_BACKTRACE="1":
+    cargo test {{ filter }}
 
 [group('testing')]
 cov:

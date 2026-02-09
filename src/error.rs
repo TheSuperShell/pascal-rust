@@ -30,7 +30,7 @@ pub enum ErrorCode {
     #[error_code(307)]
     IncompatibleTypes,
     #[error_code(308)]
-    UnsupportedBinaryOperator,
+    UnsupportedBinaryOperation,
     #[error_code(309)]
     UnsupportedUnaryOperator,
     #[error_code(310)]
@@ -96,7 +96,27 @@ impl From<Vec<Error>> for Errors {
     }
 }
 
+#[cfg(test)]
+impl From<Error> for Errors {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Errors(errs) => Self(errs.into_iter().map(|v| *v).collect()),
+            _ => Self(vec![value]),
+        }
+    }
+}
+
 impl Errors {
+    #[cfg(test)]
+    pub fn iter(&self) -> impl Iterator<Item = &Error> {
+        self.0.iter()
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn add(self, other: Result<(), Error>) -> Errors {
         match other {
             Err(Error::Errors(errs)) => Errors(
