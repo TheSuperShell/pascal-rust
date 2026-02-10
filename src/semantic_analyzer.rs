@@ -560,6 +560,7 @@ impl SemanticAnalyzer {
                         pos,
                         error_code: ErrorCode::UnkownType,
                     })?;
+                self.semantic_metadata.type_type_map.insert(node, alias);
                 return Ok(alias);
             }
             Type::Array {

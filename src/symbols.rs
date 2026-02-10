@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
     parser::StmtRef,
+    semantic_analyzer::SemanticMetadata,
     utils::{NodePool, define_ref},
 };
 
@@ -46,12 +49,42 @@ impl TypeSymbol {
         }
     }
 
-    pub fn ordinal_rank(&self, value: &Value) -> i64 {
+    pub fn ordinal_rank(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> i64 {
         match (self, value) {
+            (&Self::Range(t), _) => semantic_metadata
+                .types
+                .get(t)
+                .ordinal_rank(value, semantic_metadata),
             (Self::Enum(_), &Value::Integer(i)) => i,
             (Self::Integer, &Value::Integer(i)) => i,
             (Self::Char, &Value::Char(c)) => c as i64,
             (Self::Boolean, &Value::Boolean(b)) => b as i64,
+            _ => unreachable!("incorrect ordinal invokation: {:?} <> {:?}", self, value),
+        }
+    }
+
+    pub fn to_string(&self, value: Option<&Value>, semantic_metadata: &SemanticMetadata) -> String {
+        match (self, value) {
+            (&Self::Range(t), _) => semantic_metadata
+                .types
+                .get(t)
+                .to_string(value, semantic_metadata),
+            (Self::Integer, Some(Value::Integer(i))) => i.to_string(),
+            (Self::Real, Some(Value::Real(r))) => r.to_string(),
+            (Self::Boolean, Some(Value::Boolean(b))) => b.to_string(),
+            (Self::Char, Some(Value::Char(c))) => c.to_string(),
+            (Self::String, Some(Value::String(s))) => s.into(),
+            (Self::Array { value_type, .. }, Some(Value::Array(vals))) => format!(
+                "[{}]",
+                vals.iter()
+                    .map(|v| semantic_metadata
+                        .types
+                        .get(*value_type)
+                        .to_string(v.as_deref(), semantic_metadata))
+                    .join(", ")
+            ),
+            (Self::Enum(vals), Some(&Value::Integer(i))) => vals[i as usize].clone(),
+            (_, None) => "None".to_string(),
             _ => unreachable!(),
         }
     }
@@ -110,10 +143,15 @@ pub struct RangeSymbol {
 }
 
 impl RangeSymbol {
-    pub fn new(lower_value: &Value, upper_value: &Value, type_symbol: &TypeSymbol) -> Self {
+    pub fn new(
+        lower_value: &Value,
+        upper_value: &Value,
+        type_symbol: &TypeSymbol,
+        semantic_metadata: &SemanticMetadata,
+    ) -> Self {
         Self {
-            lower_index: type_symbol.ordinal_rank(lower_value),
-            higher_index: type_symbol.ordinal_rank(upper_value),
+            lower_index: type_symbol.ordinal_rank(lower_value, semantic_metadata),
+            higher_index: type_symbol.ordinal_rank(upper_value, semantic_metadata),
             type_symbol: type_symbol.clone(),
         }
     }
@@ -121,8 +159,8 @@ impl RangeSymbol {
     pub fn len(&self) -> usize {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }
-    pub fn get_index(&self, value: &Value) -> usize {
-        let ord = self.type_symbol.ordinal_rank(value);
+    pub fn get_index(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> usize {
+        let ord = self.type_symbol.ordinal_rank(value, semantic_metadata);
         (ord - self.lower_index) as usize
     }
 }
@@ -134,6 +172,8 @@ pub enum LValue<'a> {
     Value(Value),
 }
 
+pub type BuiltinInput<'a> = &'a [(LValue<'a>, &'a TypeSymbol)];
+
 #[derive(Debug, Clone)]
 pub enum CallableType {
     Custom {
@@ -142,7 +182,8 @@ pub enum CallableType {
     Builtin {
         func: fn(
             ctx: &mut dyn BuiltinCtx<Value = Value>,
-            args: &[&LValue],
+            semantic_metadata: &SemanticMetadata,
+            args: BuiltinInput,
         ) -> Result<Option<Value>, Error>,
     },
 }

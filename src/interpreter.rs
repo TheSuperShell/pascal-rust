@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    ops::ControlFlow,
-};
-
-use itertools::Itertools;
+use std::{collections::HashMap, fmt::Debug, ops::ControlFlow};
 
 use crate::{
     error::Error,
@@ -34,35 +28,6 @@ pub enum Value {
     Boolean(bool),
 }
 
-// impl Value {
-//     pub fn ordinal_rank(&self) -> i64 {
-//         match self {
-//             Value::Integer(i) => *i,
-//             Value::Char(c) => *c as i64,
-//             Value::Boolean(b) => *b as i64,
-//             _ => unreachable!(),
-//         }
-//     }
-// }
-
-impl ToString for Value {
-    fn to_string(&self) -> String {
-        match self {
-            Value::Integer(v) => format!("{v}"),
-            Value::Real(v) => format!("{v}"),
-            Value::Boolean(v) => format!("{v}"),
-            Value::String(v) => v.to_string(),
-            Value::Char(c) => c.to_string(),
-            Value::Array(vals) => format!(
-                "[{}]",
-                vals.iter()
-                    .map(|v| v.as_ref().map_or("None".to_string(), |v| v.to_string()))
-                    .join(", ")
-            ),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Ref {
     value: Option<Value>,
@@ -80,15 +45,6 @@ impl Ref {
     }
     pub fn set(&mut self, value: Value) {
         self.value = Some(value);
-    }
-}
-
-impl Display for Ref {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.get() {
-            Some(v) => write!(f, "{}", v.to_string()),
-            None => write!(f, "Null"),
-        }
     }
 }
 
@@ -296,7 +252,7 @@ impl Interpreter {
                                 .get(*self.type_range_map.get(index_type).unwrap()),
                             _ => panic!(),
                         };
-                        let index_value = range_symbol.get_index(&index_value);
+                        let index_value = range_symbol.get_index(&index_value, semantic_metadata);
                         match tree.expr_pool.get(*base) {
                             Expr::Var { name } => self.call_stack.write(
                                 &LValue::ArrIndex {
@@ -385,8 +341,8 @@ impl Interpreter {
                     },
                     init_val.clone(),
                 );
-                let mut i = type_symbol.ordinal_rank(&init_val);
-                while i != type_symbol.ordinal_rank(&end_val) {
+                let mut i = type_symbol.ordinal_rank(&init_val, semantic_metadata);
+                while i != type_symbol.ordinal_rank(&end_val, semantic_metadata) {
                     let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
                     match cr {
                         ControlFlow::Continue(()) => {}
@@ -491,7 +447,7 @@ impl Interpreter {
                     Expr::Var { name } => name,
                     _ => unreachable!(),
                 };
-                let index_value = index_type_symbol.ordinal_rank(&index_value);
+                let index_value = index_type_symbol.ordinal_rank(&index_value, semantic_metadata);
                 let arr_value = self
                     .call_stack
                     .lookup_value(var_name.lexem(tree.source_code))
@@ -642,21 +598,31 @@ impl Interpreter {
                 Ok(result)
             }
             CallableType::Builtin { func: f } => {
-                let values: Vec<LValue> = params
+                let values: Vec<(LValue, &TypeSymbol)> = params
                     .map(|((_, m), a)| match m {
-                        ParamMode::Var => self
-                            .visit_expr(*a, tree, semantic_metadata)
-                            .map(|e| LValue::Value(e)),
+                        ParamMode::Var => self.visit_expr(*a, tree, semantic_metadata).map(|e| {
+                            (
+                                LValue::Value(e),
+                                semantic_metadata
+                                    .types
+                                    .get(*semantic_metadata.expr_type_map.get(a).unwrap()),
+                            )
+                        }),
                         ParamMode::Ref => match tree.expr_pool.get(*a) {
-                            Expr::Var { name } => Ok(LValue::Ref {
-                                name: name.lexem(tree.source_code),
-                            }),
+                            Expr::Var { name } => Ok((
+                                LValue::Ref {
+                                    name: name.lexem(tree.source_code),
+                                },
+                                semantic_metadata
+                                    .types
+                                    .get(*semantic_metadata.expr_type_map.get(a).unwrap()),
+                            )),
                             _ => unreachable!(),
                         },
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
-                let value_refs: Vec<&LValue> = values.iter().collect();
-                f(&mut self.call_stack, &value_refs)
+                // let value_refs: Vec<(&LValue, &TypeSymbol)> = values.iter().collect();
+                f(&mut self.call_stack, semantic_metadata, &values)
             }
         }
     }
@@ -678,13 +644,25 @@ impl Interpreter {
                 let type_symbol = semantic_metadata.types.get(*type_symbol_ref);
                 self.type_range_map.insert(
                     *type_symbol_ref,
-                    self.range_symbols
-                        .alloc(RangeSymbol::new(&init_val, &end_val, type_symbol)),
+                    self.range_symbols.alloc(RangeSymbol::new(
+                        &init_val,
+                        &end_val,
+                        type_symbol,
+                        semantic_metadata,
+                    )),
                 );
                 Ok(())
             }
             Type::Alias(_) => {
-                let type_ref = semantic_metadata.type_type_map.get(&type_node).unwrap();
+                let type_ref = semantic_metadata
+                    .type_type_map
+                    .get(&type_node)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "type {:?} should have type ref",
+                            tree.type_pool.get(type_node)
+                        )
+                    });
                 let range_symbol_ref = self.type_range_map.get(type_ref);
                 if let Some(range_ref) = range_symbol_ref {
                     self.type_range_map.insert(*type_ref, *range_ref);

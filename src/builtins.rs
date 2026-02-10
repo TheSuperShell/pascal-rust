@@ -3,21 +3,23 @@ use std::io::stdin;
 use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
+    semantic_analyzer::SemanticMetadata,
     symbols::{
-        CallableSymbol, CallableSymbolRef, CallableType, LValue, ParamInputMode, ParamMode,
-        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
+        BuiltinInput, CallableSymbol, CallableSymbolRef, CallableType, LValue, ParamInputMode,
+        ParamMode, SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
     },
     utils::NodePool,
 };
 
 fn writeln(
     _: &mut dyn BuiltinCtx<Value = Value>,
-    args: &[&LValue],
+    semantic_metadata: &SemanticMetadata,
+    args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
     args.iter()
-        .map(|v| match v {
+        .map(|(v, t)| match v {
             LValue::Value(v) => {
-                print!("{}", v.to_string());
+                print!("{}", t.to_string(Some(v), semantic_metadata));
                 Ok(())
             }
             _ => Err(Error::BuiltinFunctionError {
@@ -32,10 +34,11 @@ fn writeln(
 
 fn readln(
     ctx: &mut dyn BuiltinCtx<Value = Value>,
-    args: &[&LValue],
+    _: &SemanticMetadata,
+    args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
     args.iter()
-        .map(|v| {
+        .map(|(v, _)| {
             let mut s = String::new();
             stdin()
                 .read_line(&mut s)
