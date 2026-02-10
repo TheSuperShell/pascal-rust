@@ -1,0 +1,16 @@
+Program n
+Type
+  TypeAlias(week)
+    Type(Enum)
+      mon
+      tue
+      wen
+      thu
+      fri
+      sat
+      sun
+Var
+  Var(day)
+    TypeAlias(week)
+Begin
+  NoOp

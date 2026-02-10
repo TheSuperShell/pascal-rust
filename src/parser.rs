@@ -1357,6 +1357,7 @@ mod tests {
         test_for_loop,
         test_string,
         test_array_decl,
+        test_enum,
     }
 
     test_err! {
