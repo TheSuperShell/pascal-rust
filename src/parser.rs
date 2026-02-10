@@ -94,7 +94,7 @@ pub enum Decl {
         type_node: TypeRef,
     },
     TypeDecl {
-        var: ExprRef,
+        var: TypeRef,
         type_node: TypeRef,
     },
     ConstDecl {
@@ -434,18 +434,18 @@ impl<'a> Parser<'a> {
     /// type_declaration:
     /// Type id (Comma id)* Equal type_spec
     fn type_declaration(&mut self) -> Result<Vec<Decl>, Error> {
-        let mut names = vec![self.id()?];
+        let mut names = vec![self.id_str()?];
         while let TokenType::Comma = self.current_token.token_type() {
             self.eat(TokenType::Comma)?;
-            names.push(self.id()?);
+            names.push(self.id_str()?);
         }
         self.eat(TokenType::Equal)?;
         let type_decl = self.type_spec()?;
-
         Ok(names
             .iter()
-            .map(|n| Decl::TypeDecl {
-                var: *n,
+            .map(|&t| self.type_pool.alloc(Type::Alias(t), t.span()))
+            .map(|t| Decl::TypeDecl {
+                var: t,
                 type_node: type_decl,
             })
             .collect())
@@ -511,12 +511,19 @@ impl<'a> Parser<'a> {
     }
 
     /// array_spec:
-    /// Array (LBrack range_spec RBrack)? Of type_spec
+    /// Array (LBrack (id|range_spec) RBrack)? Of type_spec
     fn array_spec(&mut self) -> Result<TypeRef, Error> {
         let start_span = self.eat(TokenType::Array)?.span();
         if let TokenType::LBracket = self.current_token.token_type() {
             self.eat(TokenType::LBracket)?;
-            let index_type = self.range_spec()?;
+            let index_type = match self.lexer.peek() {
+                Some('.') => self.range_spec()?,
+                _ => {
+                    let token = self.current_token;
+                    self.current_token = self.lexer.next()?;
+                    self.type_pool.alloc(Type::Alias(token), token.span())
+                }
+            };
             self.eat(TokenType::RBracket)?;
             self.eat(TokenType::Of)?;
             let element_type = self.type_spec()?;
@@ -1029,7 +1036,7 @@ impl<'a> Tree<'a> {
             Decl::TypeDecl { var, type_node } => {
                 format!(
                     "{indent}Type\n{}\n{}",
-                    self.visit_expr(*var, level + 1),
+                    self.visit_type(*var, level + 1),
                     self.visit_type(*type_node, level + 2)
                 )
             }
@@ -1349,6 +1356,7 @@ mod tests {
         test_while_loop,
         test_for_loop,
         test_string,
+        test_array_decl,
     }
 
     test_err! {

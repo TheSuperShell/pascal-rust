@@ -18,4 +18,7 @@ Begin
       BinOp
         LitReal(3.14)
         Equal
-        LitReal(2.7)
+        BinOp
+          LitReal(2.7)
+          IntegerDiv
+          LitInt(2)

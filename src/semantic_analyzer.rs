@@ -27,6 +27,34 @@ impl SemanticMetadata {
     pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
         self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
     }
+
+    #[cfg(test)]
+    fn get_expr_type_from_marker(&self, marker: usize, tree: &Tree) -> &TypeSymbol {
+        use itertools::Itertools;
+
+        let closest_expr = tree
+            .expr_pool
+            .ids()
+            .filter(|&id| {
+                let sp = tree.expr_pool.span(id);
+                sp.start() < marker as u32
+            })
+            .sorted_by_key(|&id| {
+                let sp = tree.expr_pool.span(id);
+                sp.len()
+            })
+            .rev()
+            .max_by_key(|&id| {
+                let sp = tree.expr_pool.span(id);
+                sp.start()
+            })
+            .expect("no expression found");
+        let expr_type_ref = self
+            .expr_type_map
+            .get(&closest_expr)
+            .expect("all expressions should have type");
+        self.types.get(*expr_type_ref)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -455,6 +483,10 @@ impl SemanticAnalyzer {
                         value_type
                     }
                     TypeSymbol::DynamicArray(v) => {
+                        let actual_index_type = match actual_index_type {
+                            &TypeSymbol::Range(t) => self.semantic_metadata.types.get(t),
+                            _ => actual_index_type,
+                        };
                         if !matches!(actual_index_type, TypeSymbol::Integer) {
                             return Err(Error::SemanticError {
                                 msg: format!(
@@ -518,6 +550,14 @@ impl SemanticAnalyzer {
                 element_type,
             } => {
                 let index_type_ref = self.visit_type(*index_type, tree)?;
+                let index_type = self.semantic_metadata.types.get(index_type_ref);
+                if !matches!(index_type, TypeSymbol::Range(..)) {
+                    return Err(Error::SemanticError {
+                        msg: format!("array index type should be range, got {:?}", index_type),
+                        pos,
+                        error_code: ErrorCode::IncorrectIndexType,
+                    });
+                }
                 let element_type = self.visit_type(*element_type, tree)?;
                 Ok(TypeSymbol::Array {
                     index_type: index_type_ref,
@@ -680,13 +720,13 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             Decl::TypeDecl { var, type_node } => {
-                let var_expr = tree.expr_pool.get(*var);
+                let var_expr = tree.type_pool.get(*var);
                 let var_name = match var_expr {
-                    Expr::Var { name } => name,
+                    &Type::Alias(name) => name,
                     _ => {
                         return Err(Error::SemanticError {
                             msg: format!("expected var, got {:?}", var_expr),
-                            pos: tree.node_pos(NodeRef::ExprRef(*var)),
+                            pos: tree.node_pos(NodeRef::TypeRef(*var)),
                             error_code: ErrorCode::ExpectedVar,
                         });
                     }
@@ -697,7 +737,7 @@ impl SemanticAnalyzer {
                 {
                     return Err(Error::SemanticError {
                         msg: format!("type {:?} is already defined", var_name),
-                        pos: tree.node_pos(NodeRef::ExprRef(*var)),
+                        pos: tree.node_pos(NodeRef::TypeRef(*var)),
                         error_code: ErrorCode::DuplicateTypeDefinition,
                     });
                 }
@@ -989,9 +1029,27 @@ fn assinable(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
+    use regex::Regex;
+
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+
+    static MARKER_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\{\s*#([a-zA-Z0-9_]+)\s*\}").expect("incorrect regex"));
+
+    fn parse_markers(src: &str) -> HashMap<String, usize> {
+        let mut markers = HashMap::new();
+        MARKER_RE
+            .captures_iter(src)
+            .map(|m| (m.get_match(), m.get(1).unwrap()))
+            .for_each(|(m, name)| {
+                markers.insert(name.as_str().to_string(), m.start());
+            });
+        markers
+    }
 
     macro_rules! test_fail {
         ($($name:ident -> [$err:path $(, $other_err:path)* $(,)?],)+) => {
@@ -999,7 +1057,7 @@ mod tests {
                 #[test]
                 fn $name() {
                     let source_path = "test_cases\\semantic_analyzer\\".to_string() + &stringify!($name) + ".pas";
-                    let source_code = std::fs::read_to_string(&source_path).expect(&format!("file {source_path} does not exist"));
+                    let source_code = std::fs::read_to_string(&source_path).unwrap_or_else(|r| panic!("file {source_path} does not exist: {r}"));
                     let lexer = Lexer::new(&source_code);
                     let tree = Parser::new(lexer).unwrap().parse().unwrap();
                     let result = SemanticAnalyzer::new().analyze(&tree);
@@ -1023,31 +1081,58 @@ mod tests {
     }
 
     macro_rules! test_succ {
-        ($($name:ident,)+) => {
+        ($($name:ident -> {
+            $($first_marker:ident: $first_type:pat $(, $marker:ident: $type:pat)*$(,)?)?
+        },)+) => {
             $(
                 #[test]
                 fn $name() {
                     let source_path = "test_cases\\semantic_analyzer\\".to_string() + &stringify!($name) + ".pas";
                     let source_code = std::fs::read_to_string(&source_path).expect(&format!("file {source_path} does not exist"));
+                    let _markers = parse_markers(&source_code);
                     let lexer = Lexer::new(&source_code);
                     let tree = Parser::new(lexer).unwrap().parse().unwrap();
                     let result = SemanticAnalyzer::new().analyze(&tree);
-                    assert!(result.is_ok());
-                    let semantic_metadata = result.unwrap();
+                    assert!(result.is_ok(), "unexpected error: {:?}", result);
+                    let _semantic_metadata = result.unwrap();
                     let missing: Vec<&Expr> = tree
                         .expr_pool
                         .ids()
-                        .filter(|k| !semantic_metadata.expr_type_map.contains_key(k))
+                        .filter(|k| !_semantic_metadata.expr_type_map.contains_key(k))
                         .map(|id| tree.expr_pool.get(id))
                         .collect();
                     assert_eq!(missing, Vec::<&Expr>::new());
+                    $(
+                        let first_marker = stringify!($first_marker);
+                        let marked_type = _semantic_metadata.get_expr_type_from_marker(_markers[first_marker], &tree);
+                        assert!(matches!(marked_type, $first_type), "marker {} expected {}, got {:?}", stringify!($firat_marker), stringify!($first_type), marked_type);
+                        $(
+                            let marked_type = _semantic_metadata.get_expr_type_from_marker(_markers[stringify!($marker)], &tree);
+                            assert!(matches!(marked_type, $type), "marker {} expected {}, got {:?}", stringify!($marker), stringify!($type), marked_type);
+                        )*
+                    )?
                 }
             )+
         };
     }
 
     test_succ! {
-        test_base,
+        test_base -> {
+            one: TypeSymbol::Integer,
+            two: TypeSymbol::Real,
+            three: TypeSymbol::Empty,
+            paren: TypeSymbol::Integer,
+        },
+        test_array -> {
+            range: TypeSymbol::Range(_),
+            arr: TypeSymbol::Array{..},
+            dyn_arr: TypeSymbol::DynamicArray(_)
+        },
+        test_function -> {
+            func: TypeSymbol::Integer,
+            res1: TypeSymbol::Integer,
+            res2: TypeSymbol::Integer,
+        },
     }
 
     test_fail! {
@@ -1094,6 +1179,7 @@ mod tests {
             ErrorCode::IncorrectUseOfProcedure
         ],
         test_index_fail -> [
+            ErrorCode::IncorrectIndexType,
             ErrorCode::IncorrectIndexType,
             ErrorCode::IncorrectIndexType,
             ErrorCode::IncorrectBaseType,

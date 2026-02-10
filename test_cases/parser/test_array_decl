@@ -1,0 +1,20 @@
+Program n
+Type
+  TypeAlias(r)
+    Type(Range)
+      LitChar('a')
+      LitChar('z')
+Type
+  TypeAlias(arr)
+    Type(Array)
+      TypeAlias(r)
+      Type(Real)
+Type
+  TypeAlias(arr)
+    Type(Array)
+      Type(Range)
+        LitInt(5)
+        LitInt(10)
+      Type(Integer)
+Begin
+  NoOp

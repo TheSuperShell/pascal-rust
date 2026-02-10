@@ -137,7 +137,6 @@ impl TokenType {
         keywords.insert("BOOLEAN".to_string(), TokenType::Boolean);
         keywords.insert("CHAR".to_string(), TokenType::Char);
         keywords.insert("STRING".to_string(), TokenType::String);
-        keywords.insert("DIV".to_string(), TokenType::IntegerDiv);
         keywords.insert("BEGIN".to_string(), TokenType::Begin);
         keywords.insert("END".to_string(), TokenType::End);
         keywords.insert("VAR".to_string(), TokenType::Var);
@@ -180,7 +179,7 @@ impl TokenType {
         char_tokens.insert(']', TokenType::RBracket);
         char_tokens.insert('+', TokenType::Plus);
         char_tokens.insert('-', TokenType::Minus);
-        char_tokens.insert('/', TokenType::RealDiv);
+        char_tokens.insert('/', TokenType::IntegerDiv);
         char_tokens.insert('*', TokenType::Mul);
         char_tokens
     }

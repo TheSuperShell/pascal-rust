@@ -53,6 +53,10 @@ impl Span {
     pub fn start(&self) -> u32 {
         self.start
     }
+    #[cfg(test)]
+    pub fn len(&self) -> u32 {
+        self.len
+    }
 }
 
 impl Hash for Span {
@@ -146,6 +150,13 @@ macro_rules! define_ref {
         impl Into<usize> for $name {
             fn into(self) -> usize {
                 self.0 as usize
+            }
+        }
+
+        #[cfg(test)]
+        impl Default for $name {
+            fn default() -> Self {
+                Self(0)
             }
         }
     };
