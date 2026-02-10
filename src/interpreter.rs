@@ -34,16 +34,16 @@ pub enum Value {
     Boolean(bool),
 }
 
-impl Value {
-    pub fn ordinal_rank(&self) -> i64 {
-        match self {
-            Value::Integer(i) => *i,
-            Value::Char(c) => *c as i64,
-            Value::Boolean(b) => *b as i64,
-            _ => unreachable!(),
-        }
-    }
-}
+// impl Value {
+//     pub fn ordinal_rank(&self) -> i64 {
+//         match self {
+//             Value::Integer(i) => *i,
+//             Value::Char(c) => *c as i64,
+//             Value::Boolean(b) => *b as i64,
+//             _ => unreachable!(),
+//         }
+//     }
+// }
 
 impl ToString for Value {
     fn to_string(&self) -> String {
@@ -385,8 +385,8 @@ impl Interpreter {
                     },
                     init_val.clone(),
                 );
-                let mut i = init_val.ordinal_rank();
-                while i != end_val.ordinal_rank() {
+                let mut i = type_symbol.ordinal_rank(&init_val);
+                while i != type_symbol.ordinal_rank(&end_val) {
                     let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
                     match cr {
                         ControlFlow::Continue(()) => {}
@@ -458,7 +458,7 @@ impl Interpreter {
                             msg: format!("undefined var {}", name),
                             pos: tree.node_pos(NodeRef::ExprRef(expr)),
                         }),
-                    VarSymbol::Const { value } => Ok(value.clone().into()),
+                    VarSymbol::Const { value, .. } => Ok(value.clone().into()),
                 }
             }
             Expr::UnaryOp { op, expr } => {
@@ -478,19 +478,20 @@ impl Interpreter {
             }
             Expr::Index {
                 base,
-                index_value,
+                index_value: index_value_ref,
                 other_indicies: _,
             } => {
-                let index_value = self.visit_expr(*index_value, tree, semantic_metadata)?;
-                // let type_symbol_ref = semantic_metadata.expr_type_map.get(base).unwrap();
-                // let range_symbol = self
-                //     .range_symbols
-                //     .get(*self.type_range_map.get(type_symbol_ref).unwrap());
+                let index_value = self.visit_expr(*index_value_ref, tree, semantic_metadata)?;
+                let index_type_ref = semantic_metadata
+                    .expr_type_map
+                    .get(index_value_ref)
+                    .unwrap();
+                let index_type_symbol = semantic_metadata.types.get(*index_type_ref);
                 let var_name = match tree.expr_pool.get(*base) {
                     Expr::Var { name } => name,
                     _ => unreachable!(),
                 };
-                let index_value = index_value.ordinal_rank();
+                let index_value = index_type_symbol.ordinal_rank(&index_value);
                 let arr_value = self
                     .call_stack
                     .lookup_value(var_name.lexem(tree.source_code))
@@ -673,10 +674,12 @@ impl Interpreter {
                 //     .expect("should exist");
                 let init_val = self.visit_expr(*start_val, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end_val, tree, semantic_metadata)?;
+                let type_symbol_ref = semantic_metadata.type_type_map.get(&type_node).unwrap();
+                let type_symbol = semantic_metadata.types.get(*type_symbol_ref);
                 self.type_range_map.insert(
-                    *semantic_metadata.type_type_map.get(&type_node).unwrap(),
+                    *type_symbol_ref,
                     self.range_symbols
-                        .alloc(RangeSymbol::new(&init_val, &end_val)),
+                        .alloc(RangeSymbol::new(&init_val, &end_val, type_symbol)),
                 );
                 Ok(())
             }

@@ -314,24 +314,13 @@ impl SemanticAnalyzer {
                     .var_symbols
                     .insert(node, var_symbol_ref);
                 let type_symbol = match var_symbol {
-                    VarSymbol::Var {
-                        name: _,
-                        type_symbol,
-                    } => {
-                        self.semantic_metadata
-                            .expr_type_map
-                            .insert(node, *type_symbol);
-                        return Ok(*type_symbol);
-                    }
-                    VarSymbol::Const { value } => match value {
-                        ConstValue::Integer(_) => TypeSymbol::Integer,
-                        ConstValue::Boolean(_) => TypeSymbol::Boolean,
-                        ConstValue::Char(_) => TypeSymbol::Char,
-                        ConstValue::String(_) => TypeSymbol::String,
-                        ConstValue::Real(_) => TypeSymbol::Real,
-                    },
+                    &VarSymbol::Var { type_symbol, .. } => type_symbol,
+                    &VarSymbol::Const { type_symbol, .. } => type_symbol,
                 };
-                Ok(type_symbol)
+                self.semantic_metadata
+                    .expr_type_map
+                    .insert(node, type_symbol);
+                return Ok(type_symbol);
             }
             Expr::BinOp { op, left, right } => {
                 let left_type_ref = self.visit_expr(*left, tree)?;
@@ -528,12 +517,40 @@ impl SemanticAnalyzer {
             Type::Boolean => Ok(TypeSymbol::Boolean),
             Type::Char => Ok(TypeSymbol::Char),
             Type::String => Ok(TypeSymbol::String),
-            Type::Enum { items } => Ok(TypeSymbol::Enum(
-                items
+            Type::Enum { items } => {
+                let type_symbol = TypeSymbol::Enum(
+                    items
+                        .iter()
+                        .map(|t| t.lexem(tree.source_code).to_string())
+                        .collect(),
+                );
+                let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+                let errors: Errors = items
                     .iter()
-                    .map(|t| t.lexem(tree.source_code).into())
-                    .collect(),
-            )),
+                    .map(|t| t.lexem(tree.source_code))
+                    .enumerate()
+                    .map(|(i, n)| {
+                        if let Some(_) = self.current_scope.lookup_var(n, false) {
+                            return Err(Error::SemanticError {
+                                msg: format!(
+                                    "enum value share the same name with a const value {n}"
+                                ),
+                                pos,
+                                error_code: ErrorCode::DuplicateVarDefinition,
+                            });
+                        }
+                        let c = self.semantic_metadata.vars.alloc(VarSymbol::Const {
+                            value: ConstValue::Integer(i as i64),
+                            type_symbol: type_symbol_ref,
+                        });
+                        self.current_scope.define_var(n, c);
+                        Ok(())
+                    })
+                    .filter_map(Result::err)
+                    .collect::<Vec<Error>>()
+                    .into();
+                return errors.result(type_symbol_ref);
+            }
             Type::Alias(v) => {
                 let alias = self
                     .current_scope
@@ -623,10 +640,14 @@ impl SemanticAnalyzer {
                     Expr::LiteralChar(c) => ConstValue::Char(*c),
                     _ => unreachable!(),
                 };
-                let const_symbol = self
-                    .semantic_metadata
-                    .vars
-                    .alloc(crate::symbols::VarSymbol::Const { value: const_type });
+                let type_symbol = self.visit_expr(*literal, tree)?;
+                let const_symbol =
+                    self.semantic_metadata
+                        .vars
+                        .alloc(crate::symbols::VarSymbol::Const {
+                            value: const_type,
+                            type_symbol,
+                        });
                 self.current_scope
                     .define_var(var_name.lexem(tree.source_code), const_symbol);
                 Ok(())
@@ -1132,6 +1153,9 @@ mod tests {
             func: TypeSymbol::Integer,
             res1: TypeSymbol::Integer,
             res2: TypeSymbol::Integer,
+        },
+        test_enum -> {
+
         },
     }
 

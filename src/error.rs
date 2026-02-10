@@ -129,6 +129,14 @@ impl Errors {
             Ok(()) => self,
         }
     }
+
+    pub fn result<R>(self, res: R) -> Result<R, Error> {
+        match self.0.len() {
+            0 => Ok(res),
+            1 => Err(self.0.into_iter().last().unwrap()),
+            _ => Err(Error::Errors(self.0.into_iter().map(Box::new).collect())),
+        }
+    }
 }
 
 impl Into<Result<(), Error>> for Errors {

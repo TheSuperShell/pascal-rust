@@ -31,13 +31,27 @@ pub enum TypeSymbol {
 
 impl TypeSymbol {
     pub fn is_ordinal(&self) -> bool {
-        matches!(self, Self::Integer | Self::Char | Self::Boolean)
+        matches!(
+            self,
+            Self::Integer | Self::Char | Self::Boolean | Self::Enum(_)
+        )
     }
     pub fn oridnal_value(&self, index: i64) -> Value {
         match self {
             TypeSymbol::Integer => Value::Integer(index),
             TypeSymbol::Char => Value::Char(char::from_u32(index as u32).unwrap()),
             TypeSymbol::Boolean => Value::Boolean(index != 0),
+            TypeSymbol::Enum(_) => Value::Integer(index),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn ordinal_rank(&self, value: &Value) -> i64 {
+        match (self, value) {
+            (Self::Enum(_), &Value::Integer(i)) => i,
+            (Self::Integer, &Value::Integer(i)) => i,
+            (Self::Char, &Value::Char(c)) => c as i64,
+            (Self::Boolean, &Value::Boolean(b)) => b as i64,
             _ => unreachable!(),
         }
     }
@@ -84,6 +98,7 @@ pub enum VarSymbol {
     },
     Const {
         value: ConstValue,
+        type_symbol: TypeSymbolRef,
     },
 }
 
@@ -91,13 +106,15 @@ pub enum VarSymbol {
 pub struct RangeSymbol {
     lower_index: i64,
     higher_index: i64,
+    type_symbol: TypeSymbol,
 }
 
 impl RangeSymbol {
-    pub fn new(lower_value: &Value, upper_value: &Value) -> Self {
+    pub fn new(lower_value: &Value, upper_value: &Value, type_symbol: &TypeSymbol) -> Self {
         Self {
-            lower_index: lower_value.ordinal_rank(),
-            higher_index: upper_value.ordinal_rank(),
+            lower_index: type_symbol.ordinal_rank(lower_value),
+            higher_index: type_symbol.ordinal_rank(upper_value),
+            type_symbol: type_symbol.clone(),
         }
     }
 
@@ -105,7 +122,7 @@ impl RangeSymbol {
         (self.higher_index - self.lower_index).try_into().unwrap()
     }
     pub fn get_index(&self, value: &Value) -> usize {
-        let ord = value.ordinal_rank();
+        let ord = self.type_symbol.ordinal_rank(value);
         (ord - self.lower_index) as usize
     }
 }

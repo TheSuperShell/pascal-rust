@@ -459,11 +459,6 @@ impl<'a> Parser<'a> {
     fn type_spec(&mut self) -> Result<TypeRef, Error> {
         let token = self.current_token.token_type();
         match token {
-            TokenType::Id => {
-                let token = self.current_token;
-                self.current_token = self.lexer.next()?;
-                Ok(self.type_pool.alloc(Type::Alias(token), token.span()))
-            }
             TokenType::Integer => {
                 let token = self.current_token;
                 self.current_token = self.lexer.next()?;
@@ -491,7 +486,14 @@ impl<'a> Parser<'a> {
             }
             TokenType::LParen => self.enum_spec(),
             TokenType::Array => self.array_spec(),
-            _ => self.range_spec(),
+            _ => match self.lexer.peek() {
+                Some('.') => self.range_spec(),
+                _ => {
+                    let token = self.current_token;
+                    self.eat(TokenType::Id)?;
+                    Ok(self.type_pool.alloc(Type::Alias(token), token.span()))
+                }
+            },
         }
     }
 
@@ -1358,6 +1360,7 @@ mod tests {
         test_string,
         test_array_decl,
         test_enum,
+        test_range,
     }
 
     test_err! {
