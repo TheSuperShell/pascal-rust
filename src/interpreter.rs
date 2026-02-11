@@ -272,6 +272,22 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             }
             Stmt::Assign { left, right } => {
                 let val = self.visit_expr(*right, tree, semantic_metadata)?;
+                let left_type_ref = semantic_metadata.expr_type_map.get(left).unwrap();
+                println!("{:?}", left_type_ref);
+                println!("{:?}", self.type_range_map);
+                if let Some(&sym) = self.type_range_map.get(left_type_ref) {
+                    let range_symbol = self.range_symbols.get(sym);
+                    if !range_symbol.within_bounds(&val, semantic_metadata) {
+                        return Err(Error::RuntimeError {
+                            msg: format!(
+                                "value {:?} is outside of range {:?} bounds",
+                                val, range_symbol
+                            ),
+                            pos: tree.node_pos(NodeRef::ExprRef(*right)),
+                            error_code: ErrorCode::RangeOutOfBounds,
+                        });
+                    }
+                }
                 match tree.expr_pool.get(*left) {
                     Expr::Var { name } => self
                         .call_stack
@@ -305,7 +321,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                                 },
                                 val,
                             ),
-                            _ => panic!(),
+                            _ => unreachable!(),
                         };
                     }
                     _ => unreachable!(),
@@ -522,6 +538,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 type_node,
                 default_value,
             } => {
+                self.visit_type(*type_node, tree, semantic_metadata)?;
                 let var_expr = tree.expr_pool.get(*var);
                 let var_name = match var_expr {
                     Expr::Var { name } => name,
@@ -536,11 +553,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                         .get(var)
                         .expect("should exist"),
                 );
-                if let TypeSymbol::Array {
-                    index_type: _,
-                    value_type: _,
-                } = type_symbol
-                {
+                if let TypeSymbol::Array { .. } = type_symbol {
                     self.visit_type(*type_node, tree, semantic_metadata)?;
                     let range_length = self
                         .range_symbols
@@ -563,17 +576,16 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 };
                 Ok(())
             }
-            Decl::Callable {
-                name: _,
-                block: _,
-                params: _,
-                return_type: _,
-            } => Ok(()),
-            Decl::ConstDecl { var: _, literal: _ } => Ok(()),
-            Decl::TypeDecl {
-                var: _,
-                type_node: _,
-            } => Ok(()),
+            Decl::Callable { params, .. } => params
+                .iter()
+                .filter(|p| !p.out)
+                .map(|p| p.type_node)
+                .map(|t| self.visit_type(t, tree, semantic_metadata))
+                .collect::<Result<(), Error>>(),
+            Decl::ConstDecl { .. } => Ok(()),
+            Decl::TypeDecl { type_node, .. } => {
+                self.visit_type(*type_node, tree, semantic_metadata)
+            }
         }
     }
     fn visit_callable(
@@ -603,14 +615,26 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     match mode {
                         ParamMode::Var => {
                             let var_symbol = semantic_metadata.vars.get(*inp);
+                            let value = self.visit_expr(*arg, tree, semantic_metadata)?;
                             let var_name = match var_symbol {
-                                VarSymbol::Var {
-                                    name,
-                                    type_symbol: _,
-                                } => name,
+                                VarSymbol::Var { name, type_symbol } => {
+                                    if let Some(r) = self.type_range_map.get(type_symbol) {
+                                        let range_symbol = self.range_symbols.get(*r);
+                                        if !range_symbol.within_bounds(&value, semantic_metadata) {
+                                            return Err(Error::RuntimeError {
+                                                msg: format!(
+                                                    "value {:?} is outside of bounds of range {:?}",
+                                                    value, range_symbol
+                                                ),
+                                                pos: tree.node_pos(NodeRef::ExprRef(*arg)),
+                                                error_code: ErrorCode::RangeOutOfBounds,
+                                            });
+                                        }
+                                    }
+                                    name
+                                }
                                 _ => unreachable!(),
                             };
-                            let value = self.visit_expr(*arg, tree, semantic_metadata)?;
                             ar.set(var_name);
                             ar.set_value(var_name, value);
                         }
@@ -640,14 +664,33 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             }
             CallableType::Builtin { func: f } => {
                 let values: Vec<(LValue, &TypeSymbol)> = params
-                    .map(|((_, m), a)| match m {
-                        ParamMode::Var => self.visit_expr(*a, tree, semantic_metadata).map(|e| {
-                            (
+                    .map(|((v, m), a)| {
+                        match m {
+                        ParamMode::Var => self.visit_expr(*a, tree, semantic_metadata).and_then(|e| {
+                            match semantic_metadata.vars.get(*v) {
+                                VarSymbol::Var { type_symbol, .. } => {
+                                    if let Some(r) = self.type_range_map.get(type_symbol) {
+                                        let range_symbol = self.range_symbols.get(*r);
+                                        if !range_symbol.within_bounds(&e, semantic_metadata) {
+                                            return Err(Error::RuntimeError {
+                                                msg: format!(
+                                                    "value {:?} is outside of bounds of range {:?}",
+                                                    e, range_symbol
+                                                ),
+                                                pos: tree.node_pos(NodeRef::ExprRef(*a)),
+                                                error_code: ErrorCode::RangeOutOfBounds,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
+                            Ok((
                                 LValue::Value(e),
                                 semantic_metadata
                                     .types
                                     .get(*semantic_metadata.expr_type_map.get(a).unwrap()),
-                            )
+                            ))
                         }),
                         ParamMode::Ref => match tree.expr_pool.get(*a) {
                             Expr::Var { name } => Ok((
@@ -660,10 +703,19 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                             )),
                             _ => unreachable!(),
                         },
+                    }
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 // let value_refs: Vec<(&LValue, &TypeSymbol)> = values.iter().collect();
-                f(self, semantic_metadata, &values)
+                let res = f(self, semantic_metadata, &values);
+                if let Err(Error::BuiltinFunctionError { function_name, msg }) = res {
+                    return Err(Error::RuntimeError {
+                        msg: format!("{}: {}", function_name, msg),
+                        pos: tree.node_pos(NodeRef::ExprRef(*node)),
+                        error_code: ErrorCode::BuiltinFunctionError,
+                    });
+                }
+                res
             }
         }
     }
@@ -676,9 +728,6 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
     ) -> Result<(), Error> {
         match tree.type_pool.get(type_node) {
             Type::Range { start_val, end_val } => {
-                // let type_symbol = semantic_metadata
-                //     .get_type_type(&type_node)
-                //     .expect("should exist");
                 let init_val = self.visit_expr(*start_val, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end_val, tree, semantic_metadata)?;
                 let type_symbol_ref = semantic_metadata.type_type_map.get(&type_node).unwrap();
@@ -911,23 +960,28 @@ mod tests {
                             _expected_out.push($output);
                         )*
                     )?
-                    let expected_out = _expected_out.join("\n") + "\n";
+                    let mut expected_out = _expected_out.join("\n");
+                    if !expected_out.is_empty() {
+                        expected_out.push_str("\n");
+                    }
                     assert_eq!(out_text, expected_out);
+
                 }
             )+
         };
+
     }
 
     macro_rules! test_fail {
         ($(
-            $name:ident
+            $name:ident$(<$file_name:ident>)?
             ($($first_input:literal$(,$input:literal)*$(,)?)?)
             -> $err:path,
         )+) => {
             $(
                 #[test]
                 fn $name() {
-                    let source_path = "test_cases\\interpreter\\".to_string() + &stringify!($name) + ".pas";
+                    let source_path = test_fail!(@impl $name, $($file_name)?);
                     let source_code = std::fs::read_to_string(&source_path).unwrap_or_else(|r| panic!("file {source_path} does not exist: {r}"));
                     let lexer = Lexer::new(&source_code);
                     let tree = Parser::new(lexer).unwrap().parse().unwrap();
@@ -950,14 +1004,29 @@ mod tests {
                 }
             )+
         };
+        (@impl $name:ident,) => {
+            "test_cases\\interpreter\\".to_string() + &stringify!($name) + ".pas"
+        };
+
+        (@impl $name:ident, $file_name:ident) => {
+            "test_cases\\interpreter\\".to_string() + &stringify!($file_name) + ".pas"
+        };
     }
 
     test_fail! {
-        test_div_zero_fail() -> ErrorCode::DivisionByZero,
+        test_div_zero_1<test_div_zero_fail>("int/int") -> ErrorCode::DivisionByZero,
+        test_div_zero_2<test_div_zero_fail>("real/int") -> ErrorCode::DivisionByZero,
+        test_div_zero_3<test_div_zero_fail>("int div int") -> ErrorCode::DivisionByZero,
+        test_div_zero_4<test_div_zero_fail>("real div int") -> ErrorCode::DivisionByZero,
+        test_div_zero_5<test_div_zero_fail>("int div real") -> ErrorCode::DivisionByZero,
+        test_div_zero_6<test_div_zero_fail>("real div real") -> ErrorCode::DivisionByZero,
+        test_range_bound_1<test_range_bound_fail>("var") -> ErrorCode::RangeOutOfBounds,
+        test_range_bound_2<test_range_bound_fail>("func") -> ErrorCode::RangeOutOfBounds,
     }
 
     test_succ! {
         test_print() -> ["Hello, World!"],
         test_inp("Hello", "World") -> ["Hello", "World"],
+        test_range(),
     }
 }

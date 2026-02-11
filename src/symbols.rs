@@ -163,6 +163,10 @@ impl RangeSymbol {
         let ord = self.type_symbol.ordinal_rank(value, semantic_metadata);
         (ord - self.lower_index) as usize
     }
+    pub fn within_bounds(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> bool {
+        let ind = self.type_symbol.ordinal_rank(value, semantic_metadata);
+        ind >= self.lower_index && ind <= self.higher_index
+    }
 }
 
 #[derive(Debug, Clone)]

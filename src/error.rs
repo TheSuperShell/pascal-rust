@@ -60,6 +60,10 @@ pub enum ErrorCode {
 
     #[error_code(401)]
     DivisionByZero,
+    #[error_code(402)]
+    BuiltinFunctionError,
+    #[error_code(403)]
+    RangeOutOfBounds,
 }
 
 #[derive(Debug)]
