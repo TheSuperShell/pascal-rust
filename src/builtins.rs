@@ -17,7 +17,7 @@ fn write(
     args.iter()
         .map(|(v, t)| match v {
             LValue::Value(v) => {
-                write!(ctx.output(), "{}", t.to_string(Some(v), semantic_metadata))?;
+                write!(ctx.output(), "{}", t.represent(Some(v), semantic_metadata))?;
                 Ok(())
             }
             _ => Err(Error::BuiltinFunctionError {

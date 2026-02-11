@@ -10,6 +10,7 @@ use crate::{
     tokens::{Token, TokenType},
     utils::NodePool,
 };
+use tracing::{debug, info};
 
 #[derive(Debug, Clone)]
 pub struct SemanticMetadata {
@@ -69,25 +70,32 @@ impl SemanticAnalyzer {
         let mut callables = NodePool::new();
         let mut vars = NodePool::new();
         let mut types = NodePool::new();
+        debug!(target: "pascal::semantic", "ENTER scope: builtin");
         let current_scope = SymbolTable::with_builtins(&mut types, &mut vars, &mut callables);
+        let semantic_metadata = SemanticMetadata {
+            types,
+            vars,
+            callables,
+            type_type_map: HashMap::new(),
+            expr_type_map: HashMap::new(),
+            callable_symbols: HashMap::new(),
+            var_symbols: HashMap::new(),
+        };
+        debug!(target: "pascal::semantic", "{}", current_scope.to_string(&semantic_metadata));
         let current_scope = SymbolTable::new(1, "global", Some(Box::new(current_scope)));
         Self {
-            semantic_metadata: SemanticMetadata {
-                types,
-                vars,
-                callables,
-                type_type_map: HashMap::new(),
-                expr_type_map: HashMap::new(),
-                callable_symbols: HashMap::new(),
-                var_symbols: HashMap::new(),
-            },
+            semantic_metadata,
             current_scope: Box::new(current_scope),
             loop_depth: 0,
         }
     }
 
     pub fn analyze(mut self, tree: &Tree) -> Result<SemanticMetadata, Error> {
+        info!(target: "pascal::semantic", "Starting the Semantic analisys");
+        debug!(target: "pascal::semantic", "ENTER scope: global");
         self.visit_stmt(tree.program, tree)?;
+        debug!(target: "pascal::semantic", "{}", self.current_scope.to_string(&self.semantic_metadata));
+        debug!(target: "pascal::semantic", "LEAVE scope: global");
         Ok(self.semantic_metadata)
     }
 
@@ -667,6 +675,7 @@ impl SemanticAnalyzer {
                     name.lexem(tree.source_code),
                     Some(old),
                 ));
+                debug!(target: "pascal::semantic", "ENTER scope: {}", self.current_scope.scope_name());
                 let mut params_vec: Vec<(VarSymbolRef, ParamMode)> =
                     Vec::with_capacity(params.len());
                 for param in params {
@@ -734,6 +743,8 @@ impl SemanticAnalyzer {
                         .define_var(name.lexem(tree.source_code), return_var);
                 }
                 self.visit_stmt(*block, tree)?;
+                debug!(target: "pascal::semantic", "{}", self.current_scope.to_string(&self.semantic_metadata));
+                debug!(target: "pascal::semantic", "LEAVE scope: {}", self.current_scope.scope_name());
                 let enclosing_scope = self
                     .current_scope
                     .take_enclosing_scope()

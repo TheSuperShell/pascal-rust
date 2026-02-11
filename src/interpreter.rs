@@ -273,8 +273,6 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             Stmt::Assign { left, right } => {
                 let val = self.visit_expr(*right, tree, semantic_metadata)?;
                 let left_type_ref = semantic_metadata.expr_type_map.get(left).unwrap();
-                println!("{:?}", left_type_ref);
-                println!("{:?}", self.type_range_map);
                 if let Some(&sym) = self.type_range_map.get(left_type_ref) {
                     let range_symbol = self.range_symbols.get(sym);
                     if !range_symbol.within_bounds(&val, semantic_metadata) {

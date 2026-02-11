@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::fmt::Write;
+use std::{collections::HashMap, sync::LazyLock};
 
 use itertools::Itertools;
+use tracing::debug;
 
 use crate::{
     error::Error,
@@ -63,12 +65,12 @@ impl TypeSymbol {
         }
     }
 
-    pub fn to_string(&self, value: Option<&Value>, semantic_metadata: &SemanticMetadata) -> String {
+    pub fn represent(&self, value: Option<&Value>, semantic_metadata: &SemanticMetadata) -> String {
         match (self, value) {
             (&Self::Range(t), _) => semantic_metadata
                 .types
                 .get(t)
-                .to_string(value, semantic_metadata),
+                .represent(value, semantic_metadata),
             (Self::Integer, Some(Value::Integer(i))) => i.to_string(),
             (Self::Real, Some(Value::Real(r))) => r.to_string(),
             (Self::Boolean, Some(Value::Boolean(b))) => b.to_string(),
@@ -80,7 +82,7 @@ impl TypeSymbol {
                     .map(|v| semantic_metadata
                         .types
                         .get(*value_type)
-                        .to_string(v.as_deref(), semantic_metadata))
+                        .represent(v.as_deref(), semantic_metadata))
                     .join(", ")
             ),
             (Self::Enum(vals), Some(&Value::Integer(i))) => vals[i as usize].clone(),
@@ -99,6 +101,47 @@ impl TypeSymbol {
             (_, TypeSymbol::Range(t)) => TypeSymbol::eq(node_pool, left, node_pool.get(*t)),
             (_, _) => left == right,
         }
+    }
+    pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
+        let kind = match self {
+            TypeSymbol::Boolean => "Boolean".into(),
+            TypeSymbol::Any => "Any".into(),
+            TypeSymbol::Array {
+                index_type,
+                value_type,
+            } => format!(
+                "Array[{}] of {}",
+                semantic_metadata
+                    .types
+                    .get(*index_type)
+                    .to_string(semantic_metadata),
+                semantic_metadata
+                    .types
+                    .get(*value_type)
+                    .to_string(semantic_metadata)
+            ),
+            TypeSymbol::Char => "Char".into(),
+            TypeSymbol::DynamicArray(value_type) => format!(
+                "Array of {}",
+                semantic_metadata
+                    .types
+                    .get(*value_type)
+                    .to_string(semantic_metadata)
+            ),
+            TypeSymbol::Empty => "Empty".into(),
+            TypeSymbol::Enum(..) => "Enum".into(),
+            TypeSymbol::Integer => "Integer".into(),
+            TypeSymbol::Range(value_type) => format!(
+                "Range of {}",
+                semantic_metadata
+                    .types
+                    .get(*value_type)
+                    .to_string(semantic_metadata)
+            ),
+            TypeSymbol::Real => "Real".into(),
+            TypeSymbol::String => "String".into(),
+        };
+        format!("<Type Symbol:{}>", kind)
     }
 }
 
@@ -133,6 +176,29 @@ pub enum VarSymbol {
         value: ConstValue,
         type_symbol: TypeSymbolRef,
     },
+}
+
+impl VarSymbol {
+    pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
+        match self {
+            Self::Var { name, type_symbol } => format!(
+                "<Var:{}>:{}",
+                name,
+                semantic_metadata
+                    .types
+                    .get(*type_symbol)
+                    .to_string(semantic_metadata)
+            ),
+            Self::Const { value, type_symbol } => {
+                let type_symbol = semantic_metadata.types.get(*type_symbol);
+                format!(
+                    "<Const:{}>:{}",
+                    type_symbol.represent(Some(&value.clone().into()), semantic_metadata),
+                    type_symbol.to_string(semantic_metadata)
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +279,41 @@ pub struct CallableSymbol {
     pub return_type: Option<TypeSymbolRef>,
 }
 
+impl CallableSymbol {
+    pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
+        let mut buf = String::new();
+        match self.body {
+            CallableType::Builtin { .. } => write!(buf, "<BuilinCallable:{}>", self.name).unwrap(),
+            CallableType::Custom { .. } => write!(buf, "<Callable:{}>", self.name).unwrap(),
+        }
+        let params = self
+            .params
+            .iter()
+            .map(|(v, mode)| (semantic_metadata.vars.get(*v), mode))
+            .map(|(v, mode)| {
+                format!(
+                    "{}{}",
+                    v.to_string(semantic_metadata),
+                    match mode {
+                        ParamMode::Ref => "OUT",
+                        ParamMode::Var => "",
+                    }
+                )
+            })
+            .join(", ");
+        write!(buf, "({})", params).unwrap();
+        if let Some(r) = self.return_type {
+            write!(
+                buf,
+                " -> {}",
+                semantic_metadata.types.get(r).to_string(semantic_metadata)
+            )
+            .unwrap();
+        }
+        buf
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SymbolTable {
     type_symbols: HashMap<String, TypeSymbolRef>,
@@ -223,9 +324,45 @@ pub struct SymbolTable {
     enclosing_scope: Option<Box<SymbolTable>>,
 }
 
-impl ToString for SymbolTable {
-    fn to_string(&self) -> String {
-        format!("Scope {}", self.scope_name)
+const H1: &'static str = "SCOPE (SCOPED SYMBOL TABLE)";
+const H2: &'static str = "Scope (SCOPED SYMBOL TABLE) contents";
+static EQ_H1: LazyLock<String> =
+    LazyLock::new(|| vec!["="].into_iter().cycle().take(H1.len()).join(""));
+static EQ_H2: LazyLock<String> =
+    LazyLock::new(|| vec!["-"].into_iter().cycle().take(H2.len()).join(""));
+
+impl SymbolTable {
+    pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
+        let mut buf = String::new();
+        writeln!(buf, "\n{}\n{}", H1, EQ_H1.as_str()).unwrap();
+        writeln!(buf, "{:<15}: {}", "Scope name", self.scope_name).unwrap();
+        writeln!(buf, "{:<15}: {}", "Scope level", self.scope_level).unwrap();
+        writeln!(
+            buf,
+            "{:<15}: {}",
+            "Enclosing scope",
+            self.enclosing_scope
+                .as_ref()
+                .map_or("None", |scope| &scope.scope_name)
+        )
+        .unwrap();
+        writeln!(buf, "{}\n{}", H2, EQ_H2.as_str()).unwrap();
+        self.type_symbols
+            .iter()
+            .map(|(n, t)| (n, semantic_metadata.types.get(*t)))
+            .map(|(n, t)| (n, t.to_string(semantic_metadata)))
+            .for_each(|(n, s)| writeln!(buf, "{:>7}: {}", n, s).unwrap());
+        self.var_symbols
+            .iter()
+            .map(|(n, t)| (n, semantic_metadata.vars.get(*t)))
+            .map(|(n, t)| (n, t.to_string(semantic_metadata)))
+            .for_each(|(n, s)| writeln!(buf, "{:>7}: {}", n, s).unwrap());
+        self.callable_symbols
+            .iter()
+            .map(|(n, t)| (n, semantic_metadata.callables.get(*t)))
+            .map(|(n, t)| (n, t.to_string(semantic_metadata)))
+            .for_each(|(n, s)| writeln!(buf, "{:>7}: {}", n, s).unwrap());
+        buf
     }
 }
 
@@ -268,28 +405,36 @@ impl SymbolTable {
 
     pub fn lookup_type(&self, name: &str, current_scope_only: bool) -> Option<TypeSymbolRef> {
         let name = &name.to_lowercase();
+        debug!(target: "pascal::semantic", "Lookup type (scope name: {}): {}", self.scope_name, name);
         if self.type_symbols.contains_key(name) {
+            debug!(target: "pascal::semantic", "type {} found in {} scope", name, self.scope_name);
             return Some(self.type_symbols[name]);
         };
         if current_scope_only {
+            debug!(target: "pascal::semantic", "type {} was not found", name);
             return None;
         }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_type(name, current_scope_only);
         };
+        debug!(target: "pascal::semantic", "type {} was not found", name);
         None
     }
     pub fn lookup_var(&self, name: &str, current_scope_only: bool) -> Option<VarSymbolRef> {
         let name = &name.to_lowercase();
+        debug!(target: "pascal::semantic", "Lookup var (scope name: {}): {}", self.scope_name, name);
         if self.var_symbols.contains_key(name) {
+            debug!(target: "pascal::semantic", "var {} found in {} scope", name, self.scope_name);
             return Some(self.var_symbols[name]);
         };
         if current_scope_only {
+            debug!(target: "pascal::semantic", "var {} was not found", name);
             return None;
         }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_var(name, current_scope_only);
         };
+        debug!(target: "pascal::semantic", "var {} was not found", name);
         None
     }
     pub fn lookup_callable(
@@ -298,15 +443,23 @@ impl SymbolTable {
         current_scope_only: bool,
     ) -> Option<CallableSymbolRef> {
         let name = &name.to_lowercase();
+        debug!(target: "pascal::semantic", "Lookup callable (scope name: {}): {}", self.scope_name, name);
         if self.callable_symbols.contains_key(name) {
+            debug!(target: "pascal::semantic", "callable {} found in {} scope", name, self.scope_name);
             return Some(self.callable_symbols[name]);
         };
         if current_scope_only {
+            debug!(target: "pascal::semantic", "callable {} was not found", name);
             return None;
         }
         if let Some(table) = &self.enclosing_scope {
             return table.lookup_callable(name, current_scope_only);
         };
+        debug!(target: "pascal::semantic", "callable {} was not found", name);
         None
+    }
+
+    pub fn scope_name(&self) -> &str {
+        &self.scope_name
     }
 }
