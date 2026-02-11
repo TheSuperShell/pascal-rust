@@ -801,8 +801,24 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             _ => unreachable!(),
         },
         TokenType::IntegerDiv => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l / v_r)),
+            (Value::Integer(v_l), Value::Integer(v_r)) => {
+                if v_r == 0 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
+                Ok(Value::Integer(v_l / v_r))
+            }
             (Value::Real(v_l), Value::Integer(v_r)) => {
+                if v_r == 0 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
                 Ok(Value::Integer((v_l / v_r as f64).floor() as i64))
             }
             _ => unreachable!(),
@@ -900,6 +916,44 @@ mod tests {
                 }
             )+
         };
+    }
+
+    macro_rules! test_fail {
+        ($(
+            $name:ident
+            ($($first_input:literal$(,$input:literal)*$(,)?)?)
+            -> $err:path,
+        )+) => {
+            $(
+                #[test]
+                fn $name() {
+                    let source_path = "test_cases\\interpreter\\".to_string() + &stringify!($name) + ".pas";
+                    let source_code = std::fs::read_to_string(&source_path).unwrap_or_else(|r| panic!("file {source_path} does not exist: {r}"));
+                    let lexer = Lexer::new(&source_code);
+                    let tree = Parser::new(lexer).unwrap().parse().unwrap();
+                    let semantic_metadata = SemanticAnalyzer::new().analyze(&tree).unwrap();
+                    let mut _inp: Vec<&str> = Vec::new();
+                    $(
+                        _inp.push($first_input);
+                        $(
+                            _inp.push($input);
+                        )*
+                    )?
+                    let inp = _inp.join("\n") + "\n";
+                    let inp = inp.as_bytes();
+                    let inp = Cursor::new(inp);
+                    let out = BufWriter::new(Vec::new());
+                    let result = Interpreter::new_test(inp, out).interperet(&tree, &semantic_metadata);
+                    assert!(result.is_err(), "expected interpreter to error, instead no error was produced");
+                    let err = result.unwrap_err();
+                    assert!(matches!(err, Error::RuntimeError{error_code: $err, ..}), "expected runtime error with error code {}, got error {}", stringify!($err), err);
+                }
+            )+
+        };
+    }
+
+    test_fail! {
+        test_div_zero_fail() -> ErrorCode::DivisionByZero,
     }
 
     test_succ! {
