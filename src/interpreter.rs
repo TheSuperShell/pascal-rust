@@ -1,12 +1,17 @@
-use std::{collections::HashMap, fmt::Debug, ops::ControlFlow};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    io::{BufRead, BufReader, BufWriter, Stdin, Stdout, Write, stdin, stdout},
+    ops::ControlFlow,
+};
 
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
     symbols::{CallableType, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
     tokens::{Token, TokenType},
-    utils::NodePool,
+    utils::{NodePool, Pos},
 };
 
 #[derive(Debug, Clone)]
@@ -97,6 +102,8 @@ pub trait BuiltinCtx {
 
     fn read<'a>(&'a self, builtin_input: &'a LValue) -> &'a Self::Value;
     fn write(&mut self, builtin_input: &LValue, value: Value);
+    fn output(&mut self) -> &mut dyn Write;
+    fn input(&mut self) -> &mut dyn BufRead;
 }
 
 pub struct CallStack {
@@ -142,14 +149,14 @@ impl CallStack {
     }
 }
 
-impl BuiltinCtx for CallStack {
+impl<R: BufRead, W: Write> BuiltinCtx for Interpreter<R, W> {
     type Value = Value;
 
     fn read<'a>(&'a self, builtin_input: &'a LValue) -> &'a Self::Value {
         match builtin_input {
             LValue::Value(v) => v,
-            LValue::Ref { name } => self.lookup_value(name).unwrap(),
-            LValue::ArrIndex { name, index } => match self.lookup_value(name).unwrap() {
+            LValue::Ref { name } => self.call_stack.lookup_value(name).unwrap(),
+            LValue::ArrIndex { name, index } => match self.call_stack.lookup_value(name).unwrap() {
                 Value::Array(a) => a[*index].as_deref().unwrap(),
                 _ => unreachable!(),
             },
@@ -160,10 +167,10 @@ impl BuiltinCtx for CallStack {
         match builtin_input {
             LValue::Value(_) => panic!(),
             LValue::Ref { name } => {
-                self.lookup_mut(name).unwrap().set(value);
+                self.call_stack.lookup_mut(name).unwrap().set(value);
             }
             LValue::ArrIndex { name, index } => {
-                match self.lookup_mut(name).unwrap().get_mut().unwrap() {
+                match self.call_stack.lookup_mut(name).unwrap().get_mut().unwrap() {
                     Value::Array(a) => {
                         a[*index] = Some(Box::new(value));
                     }
@@ -172,21 +179,58 @@ impl BuiltinCtx for CallStack {
             }
         }
     }
+
+    fn output(&mut self) -> &mut dyn Write {
+        &mut self.out_buf
+    }
+
+    fn input(&mut self) -> &mut dyn BufRead {
+        &mut self.in_buf
+    }
 }
 
-pub struct Interpreter {
+pub struct Interpreter<R: BufRead, W: Write> {
     type_range_map: HashMap<TypeSymbolRef, TypeSymbolRef>,
     call_stack: CallStack,
     range_symbols: NodePool<TypeSymbolRef, RangeSymbol>,
+    in_buf: R,
+    out_buf: W,
 }
 
-impl Interpreter {
+#[cfg(test)]
+impl<R: BufRead, W: Write> Interpreter<R, W> {
+    fn new_test(in_buf: R, out_buf: W) -> Self {
+        Self {
+            type_range_map: HashMap::new(),
+            call_stack: CallStack::new(),
+            range_symbols: NodePool::new(),
+            in_buf,
+            out_buf,
+        }
+    }
+}
+
+impl Interpreter<BufReader<Stdin>, BufWriter<Stdout>> {
     pub fn new() -> Self {
         Self {
             call_stack: CallStack::new(),
             range_symbols: NodePool::new(),
             type_range_map: HashMap::new(),
+            in_buf: BufReader::new(stdin()),
+            out_buf: BufWriter::new(stdout()),
         }
+    }
+}
+
+impl<R: BufRead, W: Write> Interpreter<R, W> {
+    #[cfg(test)]
+    fn interpret_test(
+        mut self,
+        tree: &Tree,
+        semantic_metadata: &SemanticMetadata,
+    ) -> Result<W, Error> {
+        self.interperet(tree, semantic_metadata)?;
+        Ok(self.out_buf)
     }
 
     pub fn interperet(
@@ -254,7 +298,7 @@ impl Interpreter {
                         };
                         let index_value = range_symbol.get_index(&index_value, semantic_metadata);
                         match tree.expr_pool.get(*base) {
-                            Expr::Var { name } => self.call_stack.write(
+                            Expr::Var { name } => self.write(
                                 &LValue::ArrIndex {
                                     name: name.lexem(tree.source_code),
                                     index: index_value,
@@ -335,7 +379,7 @@ impl Interpreter {
                 let init_val = self.visit_expr(*init, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end, tree, semantic_metadata)?;
                 let type_symbol = semantic_metadata.get_expr_type(init).unwrap();
-                self.call_stack.write(
+                self.write(
                     &LValue::Ref {
                         name: var.lexem(tree.source_code),
                     },
@@ -354,7 +398,7 @@ impl Interpreter {
                     }
                     i += 1;
                     let result = type_symbol.oridnal_value(i);
-                    self.call_stack.write(
+                    self.write(
                         &LValue::Ref {
                             name: var.lexem(tree.source_code),
                         },
@@ -405,15 +449,12 @@ impl Interpreter {
                     VarSymbol::Var {
                         name,
                         type_symbol: _,
-                    } => self
+                    } => Ok(self
                         .call_stack
                         .peek()
                         .get_value(name)
                         .map(|v| v.clone())
-                        .ok_or(Error::RuntimeError {
-                            msg: format!("undefined var {}", name),
-                            pos: tree.node_pos(NodeRef::ExprRef(expr)),
-                        }),
+                        .unwrap()),
                     VarSymbol::Const { value, .. } => Ok(value.clone().into()),
                 }
             }
@@ -430,7 +471,8 @@ impl Interpreter {
             Expr::BinOp { op, left, right } => {
                 let v_l = self.visit_expr(*left, tree, semantic_metadata)?;
                 let v_r = self.visit_expr(*right, tree, semantic_metadata)?;
-                Ok(bin_op(op, v_l, v_r))
+                let pos = tree.node_pos(NodeRef::ExprRef(*right));
+                bin_op(pos, op, v_l, v_r)
             }
             Expr::Index {
                 base,
@@ -454,7 +496,6 @@ impl Interpreter {
                     .expect("should exist");
                 match arr_value {
                     Value::Array(_) => Ok(self
-                        .call_stack
                         .read(&LValue::ArrIndex {
                             name: var_name.lexem(tree.source_code),
                             index: index_value as usize,
@@ -622,7 +663,7 @@ impl Interpreter {
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 // let value_refs: Vec<(&LValue, &TypeSymbol)> = values.iter().collect();
-                f(&mut self.call_stack, semantic_metadata, &values)
+                f(self, semantic_metadata, &values)
             }
         }
     }
@@ -691,83 +732,178 @@ impl Interpreter {
     }
 }
 
-fn bin_op(op: &TokenType, v_l: Value, v_r: Value) -> Value {
+fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Error> {
     match op {
         TokenType::Plus => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l + v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 + v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l + v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
-            (Value::String(v_l), Value::String(v_r)) => Value::String(v_l + &v_r),
-            (Value::String(v_l), Value::Char(v_r)) => Value::String(v_l + &v_r.to_string()),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l + v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 + v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l + v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l + v_r)),
+            (Value::String(v_l), Value::String(v_r)) => Ok(Value::String(v_l + &v_r)),
+            (Value::String(v_l), Value::Char(v_r)) => Ok(Value::String(v_l + &v_r.to_string())),
             _ => unreachable!(),
         },
         TokenType::Minus => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l - v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 - v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l - v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l + v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l - v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 - v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l - v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l + v_r)),
             _ => unreachable!(),
         },
         TokenType::Mul => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l * v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 * v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l * v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l * v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l * v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 * v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l * v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l * v_r)),
             _ => unreachable!(),
         },
         TokenType::RealDiv => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Real(v_l as f64 / v_r as f64),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Real(v_l as f64 / v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Real(v_l / v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Real(v_l / v_r),
-            _ => unreachable!(),
-        },
-        TokenType::IntegerDiv => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Integer(v_l / v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => {
+                if v_r == 0 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
+                Ok(Value::Real(v_l as f64 / v_r as f64))
+            }
+            (Value::Integer(v_l), Value::Real(v_r)) => {
+                if v_r.abs() < 0.0000000001 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
+                Ok(Value::Real(v_l as f64 / v_r))
+            }
             (Value::Real(v_l), Value::Integer(v_r)) => {
-                Value::Integer((v_l / v_r as f64).floor() as i64)
+                if v_r == 0 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
+                Ok(Value::Real(v_l / v_r as f64))
+            }
+            (Value::Real(v_l), Value::Real(v_r)) => {
+                if v_r.abs() < 0.0000000001 {
+                    return Err(Error::RuntimeError {
+                        msg: format!("division by zero"),
+                        pos,
+                        error_code: ErrorCode::DivisionByZero,
+                    });
+                }
+                Ok(Value::Real(v_l / v_r))
             }
             _ => unreachable!(),
         },
-        TokenType::Equal => Value::Boolean(v_l == v_r),
-        TokenType::NotEqual => Value::Boolean(v_l != v_r),
+        TokenType::IntegerDiv => match (v_l, v_r) {
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l / v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => {
+                Ok(Value::Integer((v_l / v_r as f64).floor() as i64))
+            }
+            _ => unreachable!(),
+        },
+        TokenType::Equal => Ok(Value::Boolean(v_l == v_r)),
+        TokenType::NotEqual => Ok(Value::Boolean(v_l != v_r)),
         TokenType::And => match (v_l, v_r) {
-            (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l && v_r),
+            (Value::Boolean(v_l), Value::Boolean(v_r)) => Ok(Value::Boolean(v_l && v_r)),
             _ => unreachable!(),
         },
         TokenType::Or => match (v_l, v_r) {
-            (Value::Boolean(v_l), Value::Boolean(v_r)) => Value::Boolean(v_l || v_r),
+            (Value::Boolean(v_l), Value::Boolean(v_r)) => Ok(Value::Boolean(v_l || v_r)),
             _ => unreachable!(),
         },
         TokenType::GreaterThen => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean(v_l as f64 > v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l > v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l > v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l > v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l as f64 > v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l > v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l > v_r)),
             _ => unreachable!(),
         },
         TokenType::LessThen => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) < v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l < v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l < v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l < v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) < v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l < v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l < v_r)),
             _ => unreachable!(),
         },
         TokenType::GreaterEqual => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) >= v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l >= v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l >= v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l >= v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) >= v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l >= v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l >= v_r)),
             _ => unreachable!(),
         },
         TokenType::LessEqual => match (v_l, v_r) {
-            (Value::Integer(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r),
-            (Value::Integer(v_l), Value::Real(v_r)) => Value::Boolean((v_l as f64) <= v_r),
-            (Value::Real(v_l), Value::Integer(v_r)) => Value::Boolean(v_l <= v_r as f64),
-            (Value::Real(v_l), Value::Real(v_r)) => Value::Boolean(v_l <= v_r),
+            (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l <= v_r)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) <= v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l <= v_r as f64)),
+            (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l <= v_r)),
             _ => unreachable!(),
         },
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use crate::{lexer::Lexer, parser::Parser, semantic_analyzer::SemanticAnalyzer};
+
+    use super::*;
+
+    macro_rules! test_succ {
+        ($(
+            $name:ident
+            ($($first_input:literal$(,$input:literal)*$(,)?)?)
+            $(->[$first_output:literal$(,$output:literal)*$(,)?])?,
+        )+) => {
+            $(
+                #[test]
+                fn $name() {
+                    let source_path = "test_cases\\interpreter\\".to_string() + stringify!($name) + ".pas";
+                    let source_code = std::fs::read_to_string(&source_path).unwrap_or_else(|e| panic!("no file {source_path}: {e}"));
+                    let lexer = Lexer::new(&source_code);
+                    let tree = Parser::new(lexer).unwrap().parse().unwrap();
+                    let semantic_metadata = SemanticAnalyzer::new().analyze(&tree).unwrap();
+                    let mut _inp: Vec<&str> = Vec::new();
+                    $(
+                        _inp.push($first_input);
+                        $(
+                            _inp.push($input);
+                        )*
+                    )?
+                    let inp = _inp.join("\n") + "\n";
+                    let inp = inp.as_bytes();
+                    let inp = Cursor::new(inp);
+                    let out = BufWriter::new(Vec::new());
+                    let out = Interpreter::new_test(inp, out)
+                        .interpret_test(&tree, &semantic_metadata)
+                        .unwrap()
+                        .into_inner()
+                        .unwrap();
+                    let out_text = String::from_utf8(out).unwrap();
+                    let mut _expected_out: Vec<&str> = Vec::new();
+                    $(
+                        _expected_out.push($first_output);
+                        $(
+                            _expected_out.push($output);
+                        )*
+                    )?
+                    let expected_out = _expected_out.join("\n") + "\n";
+                    assert_eq!(out_text, expected_out);
+                }
+            )+
+        };
+    }
+
+    test_succ! {
+        test_print() -> ["Hello, World!"],
+        test_inp("Hello", "World") -> ["Hello", "World"],
     }
 }

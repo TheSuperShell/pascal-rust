@@ -1,5 +1,3 @@
-use std::io::stdin;
-
 use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
@@ -11,15 +9,15 @@ use crate::{
     utils::NodePool,
 };
 
-fn writeln(
-    _: &mut dyn BuiltinCtx<Value = Value>,
+fn write(
+    ctx: &mut dyn BuiltinCtx<Value = Value>,
     semantic_metadata: &SemanticMetadata,
     args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
     args.iter()
         .map(|(v, t)| match v {
             LValue::Value(v) => {
-                print!("{}", t.to_string(Some(v), semantic_metadata));
+                write!(ctx.output(), "{}", t.to_string(Some(v), semantic_metadata))?;
                 Ok(())
             }
             _ => Err(Error::BuiltinFunctionError {
@@ -28,7 +26,15 @@ fn writeln(
             }),
         })
         .collect::<Result<(), Error>>()?;
-    print!("\n");
+    Ok(None)
+}
+fn writeln(
+    ctx: &mut dyn BuiltinCtx<Value = Value>,
+    semantic_metadata: &SemanticMetadata,
+    args: BuiltinInput,
+) -> Result<Option<Value>, Error> {
+    write(ctx, semantic_metadata, args)?;
+    write!(ctx.output(), "\n")?;
     Ok(None)
 }
 
@@ -40,12 +46,18 @@ fn readln(
     args.iter()
         .map(|(v, _)| {
             let mut s = String::new();
-            stdin()
+            ctx.input()
                 .read_line(&mut s)
                 .map_err(|e| Error::BuiltinFunctionError {
                     function_name: "readln",
                     msg: format!("read line error: {e}"),
                 })?;
+            if s.ends_with('\n') {
+                s.pop();
+            }
+            if s.ends_with('\r') {
+                s.pop();
+            }
             ctx.write(v, Value::String(s));
             Ok(())
         })
@@ -60,6 +72,14 @@ impl SymbolTable {
         callables: &mut NodePool<CallableSymbolRef, CallableSymbol>,
     ) -> Self {
         let mut st = Self::new(0, "builtin", None);
+        let write = callables.alloc(CallableSymbol {
+            name: "write".into(),
+            params: vec![],
+            param_input_mode: ParamInputMode::Repeat,
+            body: CallableType::Builtin { func: write },
+            return_type: None,
+        });
+        st.define_callable("write", write);
         let writeln = callables.alloc(CallableSymbol {
             name: "writeln".into(),
             return_type: None,

@@ -10,7 +10,11 @@ type days= (mon, tue, wen, thu, fri);
     var i: integer;
     var arr: array[mon..fri] of days;
     var day: week;
+    var output: string;
 begin
+    readln(output);
+    writeln(output);
+    writeln(output);
     for i := 0 to 25 do
         writeln('fib(', i, ') = ', fib(i));
     for day := mon to fri do

@@ -57,6 +57,9 @@ pub enum ErrorCode {
     UnkownCallable,
     #[error_code(321)]
     IncorrectNumberOfArguments,
+
+    #[error_code(401)]
+    DivisionByZero,
 }
 
 #[derive(Debug)]
@@ -79,6 +82,7 @@ pub enum Error {
     RuntimeError {
         msg: String,
         pos: Pos,
+        error_code: ErrorCode,
     },
     IoError(std::io::Error),
     BuiltinFunctionError {
@@ -194,8 +198,19 @@ impl Error {
                     msg
                 )
             }
-            Error::RuntimeError { msg, pos } => {
-                format!("Runtime Error at row {} col {}: {}", pos.row, pos.col, msg)
+            Error::RuntimeError {
+                msg,
+                pos,
+                error_code,
+            } => {
+                format!(
+                    "Runtime Error at row {} col {} ({}: {:?}): {}",
+                    pos.row,
+                    pos.col,
+                    error_code.error_code(),
+                    error_code,
+                    msg
+                )
             }
             Error::BuiltinFunctionError { function_name, msg } => {
                 format!("Builtin function {function_name} error: {msg}")
