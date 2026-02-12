@@ -5,7 +5,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 pub fn init_logging(stack: bool, scope: bool) {
     let directives = format!(
-        "pascal::semantic={},pascal::interp={}",
+        "pascal=warn,pascal::semantic={},pascal::interp={}",
         match scope {
             true => "debug",
             false => "warn",
@@ -28,7 +28,7 @@ fn main() {
     let path = matches.get_one::<String>("path").unwrap();
     init_logging(matches.get_flag("stack"), matches.get_flag("scope"));
     match interprete(path) {
-        Err(e) => error!("{e}"),
+        Err(e) => error!(target: "pascal", "{e}"),
         _ => (),
     }
 }

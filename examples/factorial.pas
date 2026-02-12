@@ -11,7 +11,7 @@ type days= (mon, tue, wen, thu, fri);
     var arr: array[mon..fri] of days;
     var day: week;
 begin
-    for i := 0 to 25 do
+    for i := 0 to 7 do
         writeln('fib(', i, ') = ', fib(i));
     for day := mon to fri do
         arr[day] := day;

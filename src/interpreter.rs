@@ -1,9 +1,13 @@
+use std::fmt::Write as _;
 use std::{
     collections::HashMap,
     fmt::Debug,
     io::{BufRead, BufReader, BufWriter, Stdin, Stdout, Write, stdin, stdout},
     ops::ControlFlow,
 };
+
+use itertools::Itertools;
+use tracing::debug;
 
 use crate::{
     error::{Error, ErrorCode},
@@ -33,6 +37,24 @@ pub enum Value {
     Boolean(bool),
 }
 
+impl ToString for Value {
+    fn to_string(&self) -> String {
+        match self {
+            Self::Boolean(b) => b.to_string(),
+            Self::Char(c) => c.to_string(),
+            Self::Integer(i) => i.to_string(),
+            Self::Real(r) => r.to_string(),
+            Self::String(s) => s.into(),
+            Self::Array(vals) => format!(
+                "[{}]",
+                vals.iter()
+                    .map(|v| v.as_deref().map_or("None".to_string(), |v| v.to_string()))
+                    .join(", ")
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Ref {
     value: Option<Value>,
@@ -53,6 +75,15 @@ impl Ref {
     }
 }
 
+impl ToString for Ref {
+    fn to_string(&self) -> String {
+        match &self.value {
+            None => "None".into(),
+            Some(v) => v.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ActivationRecord {
     members: HashMap<String, Ref>,
@@ -62,7 +93,17 @@ pub struct ActivationRecord {
 
 impl ToString for ActivationRecord {
     fn to_string(&self) -> String {
-        format!("Activation Record {} - {}", self.name, self.nesting_level)
+        let mut buf = String::new();
+        writeln!(
+            buf,
+            "Activation Record {} - {}",
+            self.name, self.nesting_level
+        )
+        .unwrap();
+        self.members
+            .iter()
+            .for_each(|(n, r)| writeln!(buf, "    {:<20}: {}", n, r.to_string()).unwrap());
+        buf
     }
 }
 
@@ -108,6 +149,17 @@ pub trait BuiltinCtx {
 
 pub struct CallStack {
     records: Vec<ActivationRecord>,
+}
+
+impl ToString for CallStack {
+    fn to_string(&self) -> String {
+        let mut buf = String::new();
+        writeln!(buf, "CALL STACK").unwrap();
+        self.records
+            .iter()
+            .for_each(|r| writeln!(buf, "{}", r.to_string()).unwrap());
+        buf
+    }
 }
 
 impl CallStack {
@@ -239,7 +291,14 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
         semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push(ActivationRecord::new("gloabl", 0));
+
+        debug!(target: "pascal::interp", "ENTER Program");
+        debug!(target: "pascal::interp", "{}", self.call_stack.to_string());
+
         let _ = self.visit_stmt(tree.program, tree, semantic_metadata)?;
+
+        debug!(target: "pascal::interp", "LEAVE Program");
+        debug!(target: "pascal::interp", "{}", self.call_stack.to_string());
         Ok(())
     }
 
@@ -644,6 +703,10 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     ar.set(&symbol.name);
                 }
                 self.call_stack.push(ar);
+
+                debug!(target: "pascal::interp", "ENTER CALLABLE: {}", symbol.name);
+                debug!(target: "pascal::interp", "{}", self.call_stack.to_string());
+
                 let cf = self.visit_stmt(node, tree, semantic_metadata)?;
                 let result = match symbol.return_type {
                     Some(_) => {
@@ -657,6 +720,8 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     }
                     None => None,
                 };
+                debug!(target: "pascal::interp", "LEAVE CALLABLE: {}", symbol.name);
+                debug!(target: "pascal::interp", "{}", self.call_stack.to_string());
                 self.call_stack.pop();
                 Ok(result)
             }
