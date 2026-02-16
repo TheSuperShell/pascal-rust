@@ -1,5 +1,7 @@
+use std::{fs::File, io::Write};
+
 use clap::{arg, command};
-use pascal_rust::interprete;
+use pascal_rust::compile;
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -22,13 +24,20 @@ pub fn init_logging(stack: bool, scope: bool) {
 fn main() {
     let matches = command!()
         .arg(arg!(<path> "Path of the scrip"))
+        .arg(arg!(<target> "Compilation target"))
         .arg(arg!(--scope "Turn on scope logging"))
         .arg(arg!(--stack "Turn on stack logging"))
         .get_matches();
     let path = matches.get_one::<String>("path").unwrap();
+    let target = matches.get_one::<String>("target").unwrap();
+    let mut file = File::create(target).unwrap();
     init_logging(matches.get_flag("stack"), matches.get_flag("scope"));
-    match interprete(path) {
-        Err(e) => error!(target: "pascal", "{e}"),
-        _ => (),
-    }
+    let bytecode = match compile(path) {
+        Err(e) => {
+            error!(target: "pascal", "{e}");
+            std::process::exit(1);
+        }
+        Ok(bytecode) => bytecode,
+    };
+    file.write_all(bytecode.as_bytes()).unwrap();
 }

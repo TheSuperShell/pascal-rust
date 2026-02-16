@@ -89,6 +89,7 @@ pub enum Error {
         error_code: ErrorCode,
     },
     IoError(std::io::Error),
+    FmtError(std::fmt::Error),
     BuiltinFunctionError {
         function_name: &'static str,
         msg: String,
@@ -220,6 +221,7 @@ impl Error {
                 format!("Builtin function {function_name} error: {msg}")
             }
             Error::IoError(e) => e.to_string(),
+            Error::FmtError(e) => e.to_string(),
             Error::Errors(errs) => {
                 format!(
                     "Errors:\n{}",
@@ -239,5 +241,11 @@ impl std::fmt::Display for Error {
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
         Self::IoError(value)
+    }
+}
+
+impl From<std::fmt::Error> for Error {
+    fn from(value: std::fmt::Error) -> Self {
+        Self::FmtError(value)
     }
 }
