@@ -62,13 +62,14 @@ impl Compiler {
                 if name.lexem(tree.source_code).to_lowercase() != "writeln" {
                     unimplemented!("Only writeln is supported for now")
                 }
+                writeln!(self.bytes, "; call writeln")?;
                 for arg in args {
                     self.visit_expr(arg, tree)?;
+                    writeln!(self.bytes, "pop rax")?;
+                    writeln!(self.bytes, "mov rcx, fmt")?;
+                    writeln!(self.bytes, "mov rdx, rax")?;
+                    writeln!(self.bytes, "call printf")?;
                 }
-                writeln!(self.bytes, "; call writeln")?;
-                writeln!(self.bytes, "mov rcx, fmt")?;
-                writeln!(self.bytes, "mov rdx, rax")?;
-                writeln!(self.bytes, "call printf")?;
                 Ok(())
             }
             _ => unreachable!(),
@@ -78,7 +79,7 @@ impl Compiler {
     fn visit_expr(&mut self, expr: &ExprRef, tree: &Tree) -> Result<(), Error> {
         match tree.expr_pool.get(*expr) {
             Expr::LiteralInteger(i) => {
-                writeln!(self.bytes, "mov rax, {i}")?;
+                writeln!(self.bytes, "push {i}")?;
                 Ok(())
             }
             Expr::UnaryOp { op, expr } => {
@@ -86,7 +87,9 @@ impl Compiler {
                 match op {
                     TokenType::Plus => {}
                     TokenType::Minus => {
+                        writeln!(self.bytes, "pop rax")?;
                         writeln!(self.bytes, "neg rax")?;
+                        writeln!(self.bytes, "push rax")?;
                     }
                     _ => todo!(),
                 }
@@ -94,9 +97,8 @@ impl Compiler {
             }
             Expr::BinOp { op, left, right } => {
                 self.visit_expr(left, tree)?;
-                writeln!(self.bytes, "push rax")?;
                 self.visit_expr(right, tree)?;
-                writeln!(self.bytes, "mov rbx, rax")?;
+                writeln!(self.bytes, "pop rbx")?;
                 writeln!(self.bytes, "pop rax")?;
                 match op {
                     TokenType::Plus => {
@@ -114,6 +116,7 @@ impl Compiler {
                     }
                     _ => todo!(),
                 }
+                writeln!(self.bytes, "push rax")?;
                 Ok(())
             }
             _ => todo!(),
