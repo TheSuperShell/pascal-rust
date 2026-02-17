@@ -1,7 +1,5 @@
-use std::{fs::File, io::Write};
-
 use clap::{arg, command};
-use pascal_rust::compile;
+use pascal_rust::compile_into_file;
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -30,14 +28,12 @@ fn main() {
         .get_matches();
     let path = matches.get_one::<String>("path").unwrap();
     let target = matches.get_one::<String>("target").unwrap();
-    let mut file = File::create(target).unwrap();
     init_logging(matches.get_flag("stack"), matches.get_flag("scope"));
-    let bytecode = match compile(path) {
+    match compile_into_file(path, target) {
         Err(e) => {
             error!(target: "pascal", "{e}");
             std::process::exit(1);
         }
-        Ok(bytecode) => bytecode,
+        Ok(_) => {}
     };
-    file.write_all(bytecode.as_bytes()).unwrap();
 }

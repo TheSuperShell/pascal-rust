@@ -30,7 +30,7 @@ pub fn interprete<P: AsRef<Path> + ToString>(path: P) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn compile<P: AsRef<Path> + ToString>(path: P) -> Result<String, Error> {
+pub fn compile_into_file<P: AsRef<Path> + ToString>(path: P, target: P) -> Result<(), Error> {
     let source_code = std::fs::read_to_string(path)?;
     let lexer = Lexer::new(&source_code);
     let parser = Parser::new(lexer)?;
@@ -38,5 +38,7 @@ pub fn compile<P: AsRef<Path> + ToString>(path: P) -> Result<String, Error> {
     // println!("{tree}");
     let semantic_analyzer = SemanticAnalyzer::new();
     let _ = semantic_analyzer.analyze(&tree)?;
-    Compiler::new().compile(&tree)
+    let target = std::fs::File::create(target)?;
+    let _ = Compiler::new(target)?.compile(&tree)?;
+    Ok(())
 }
