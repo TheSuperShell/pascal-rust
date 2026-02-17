@@ -51,8 +51,8 @@ impl Hash for Token {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TokenType {
-    IntegerConst(i64),
-    RealConst(f64),
+    IntegerConst(i32),
+    RealConst(f32),
     CharConst(char),
     BooleanConst(bool),
     Program,

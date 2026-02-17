@@ -41,7 +41,7 @@ impl TypeSymbol {
             Self::Integer | Self::Char | Self::Boolean | Self::Enum(_)
         )
     }
-    pub fn oridnal_value(&self, index: i64) -> Value {
+    pub fn oridnal_value(&self, index: i32) -> Value {
         match self {
             TypeSymbol::Integer => Value::Integer(index),
             TypeSymbol::Char => Value::Char(char::from_u32(index as u32).unwrap()),
@@ -51,7 +51,7 @@ impl TypeSymbol {
         }
     }
 
-    pub fn ordinal_rank(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> i64 {
+    pub fn ordinal_rank(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> i32 {
         match (self, value) {
             (&Self::Range(t), _) => semantic_metadata
                 .types
@@ -59,8 +59,8 @@ impl TypeSymbol {
                 .ordinal_rank(value, semantic_metadata),
             (Self::Enum(_), &Value::Integer(i)) => i,
             (Self::Integer, &Value::Integer(i)) => i,
-            (Self::Char, &Value::Char(c)) => c as i64,
-            (Self::Boolean, &Value::Boolean(b)) => b as i64,
+            (Self::Char, &Value::Char(c)) => c as i32,
+            (Self::Boolean, &Value::Boolean(b)) => b as i32,
             _ => unreachable!("incorrect ordinal invokation: {:?} <> {:?}", self, value),
         }
     }
@@ -147,8 +147,8 @@ impl TypeSymbol {
 
 #[derive(Debug, Clone)]
 pub enum ConstValue {
-    Integer(i64),
-    Real(f64),
+    Integer(i32),
+    Real(f32),
     String(String),
     Char(char),
     Boolean(bool),
@@ -203,8 +203,8 @@ impl VarSymbol {
 
 #[derive(Debug, Clone)]
 pub struct RangeSymbol {
-    lower_index: i64,
-    higher_index: i64,
+    lower_index: i32,
+    higher_index: i32,
     type_symbol: TypeSymbol,
 }
 

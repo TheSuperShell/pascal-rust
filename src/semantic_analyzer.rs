@@ -548,7 +548,7 @@ impl SemanticAnalyzer {
                             });
                         }
                         let c = self.semantic_metadata.vars.alloc(VarSymbol::Const {
-                            value: ConstValue::Integer(i as i64),
+                            value: ConstValue::Integer(i as i32),
                             type_symbol: type_symbol_ref,
                         });
                         self.current_scope.define_var(n, c);

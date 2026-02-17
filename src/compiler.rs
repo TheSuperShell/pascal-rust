@@ -8,7 +8,7 @@ use std::io::Write;
 
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
-    Integer(i8),
+    Integer(i32),
     Rax,
     Rbx,
     Rcx,
@@ -223,7 +223,7 @@ impl<W: Write> Compiler<W> {
     fn visit_expr(&mut self, expr: &ExprRef, tree: &Tree) -> Result<(), Error> {
         match tree.expr_pool.get(*expr) {
             Expr::LiteralInteger(i) => {
-                self.asm.push_cmd(Command::Push(Value::Integer(*i as i8)));
+                self.asm.push_cmd(Command::Push(Value::Integer(*i)));
                 Ok(())
             }
             Expr::UnaryOp { op, expr } => {

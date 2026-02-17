@@ -31,8 +31,8 @@ pub type Exec<T> = Result<ControlFlow<Signal, T>, Error>;
 pub enum Value {
     Array(Vec<Option<Box<Value>>>),
     String(String),
-    Integer(i64),
-    Real(f64),
+    Integer(i32),
+    Real(f32),
     Char(char),
     Boolean(bool),
 }
@@ -848,8 +848,8 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
     match op {
         TokenType::Plus => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l + v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 + v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l + v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f32 + v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l + v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l + v_r)),
             (Value::String(v_l), Value::String(v_r)) => Ok(Value::String(v_l + &v_r)),
             (Value::String(v_l), Value::Char(v_r)) => Ok(Value::String(v_l + &v_r.to_string())),
@@ -857,15 +857,15 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
         },
         TokenType::Minus => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l - v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 - v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l - v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f32 - v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l - v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l + v_r)),
             _ => unreachable!(),
         },
         TokenType::Mul => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Integer(v_l * v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f64 * v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l * v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l as f32 * v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Real(v_l * v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Real(v_l * v_r)),
             _ => unreachable!(),
         },
@@ -878,7 +878,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
                         error_code: ErrorCode::DivisionByZero,
                     });
                 }
-                Ok(Value::Real(v_l as f64 / v_r as f64))
+                Ok(Value::Real(v_l as f32 / v_r as f32))
             }
             (Value::Integer(v_l), Value::Real(v_r)) => {
                 if v_r.abs() < 0.0000000001 {
@@ -888,7 +888,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
                         error_code: ErrorCode::DivisionByZero,
                     });
                 }
-                Ok(Value::Real(v_l as f64 / v_r))
+                Ok(Value::Real(v_l as f32 / v_r))
             }
             (Value::Real(v_l), Value::Integer(v_r)) => {
                 if v_r == 0 {
@@ -898,7 +898,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
                         error_code: ErrorCode::DivisionByZero,
                     });
                 }
-                Ok(Value::Real(v_l / v_r as f64))
+                Ok(Value::Real(v_l / v_r as f32))
             }
             (Value::Real(v_l), Value::Real(v_r)) => {
                 if v_r.abs() < 0.0000000001 {
@@ -931,7 +931,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
                         error_code: ErrorCode::DivisionByZero,
                     });
                 }
-                Ok(Value::Integer((v_l / v_r as f64).floor() as i64))
+                Ok(Value::Integer((v_l / v_r as f32).floor() as i32))
             }
             _ => unreachable!(),
         },
@@ -947,29 +947,29 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
         },
         TokenType::GreaterThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l > v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l as f64 > v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l > v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l as f32 > v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l > v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l > v_r)),
             _ => unreachable!(),
         },
         TokenType::LessThen => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l < v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) < v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l < v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f32) < v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l < v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l < v_r)),
             _ => unreachable!(),
         },
         TokenType::GreaterEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l >= v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) >= v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l >= v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f32) >= v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l >= v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l >= v_r)),
             _ => unreachable!(),
         },
         TokenType::LessEqual => match (v_l, v_r) {
             (Value::Integer(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l <= v_r)),
-            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f64) <= v_r)),
-            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l <= v_r as f64)),
+            (Value::Integer(v_l), Value::Real(v_r)) => Ok(Value::Boolean((v_l as f32) <= v_r)),
+            (Value::Real(v_l), Value::Integer(v_r)) => Ok(Value::Boolean(v_l <= v_r as f32)),
             (Value::Real(v_l), Value::Real(v_r)) => Ok(Value::Boolean(v_l <= v_r)),
             _ => unreachable!(),
         },

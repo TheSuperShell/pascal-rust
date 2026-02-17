@@ -34,8 +34,8 @@ pub enum Expr {
     Var {
         name: Token,
     },
-    LiteralInteger(i64),
-    LiteralReal(f64),
+    LiteralInteger(i32),
+    LiteralReal(f32),
     LiteralBool(bool),
     LiteralChar(char),
     LiteralString(Token),
