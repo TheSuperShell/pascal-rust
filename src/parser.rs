@@ -332,7 +332,7 @@ impl<'a> Parser<'a> {
         let default_value = match self.current_token.token_type() {
             TokenType::Equal => {
                 self.eat(TokenType::Equal)?;
-                Some(self.literal()?)
+                Some(self.expr()?)
             }
             _ => None,
         };

@@ -7,6 +7,7 @@ use std::io::Write;
 use std::{collections::HashMap, fmt::Display};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Value<'a> {
     Integer(i32),
     Rax,
@@ -18,6 +19,8 @@ pub enum Value<'a> {
     Rsp,
 
     Eax,
+    Ebx,
+    Edx,
 
     Variable(&'a str),
 }
@@ -33,12 +36,24 @@ impl<'a> Display for Value<'a> {
             Value::Rdx => write!(f, "rdx"),
             Value::Rsp => write!(f, "rsp"),
             Value::Eax => write!(f, "eax"),
+            Value::Ebx => write!(f, "ebx"),
+            Value::Edx => write!(f, "edx"),
             Value::Variable(v) => write!(f, "{}", v),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+impl PartialEq for Value<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Integer(i1), Value::Integer(i2)) => i1 == i2,
+            (Value::Variable(v1), Value::Variable(v2)) => v1 == v2,
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MemoryAddress<'a> {
     base: Value<'a>,
     offset: i32,
@@ -64,7 +79,7 @@ impl<'a> Display for MemoryAddress<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operand<'a> {
     Register(Value<'a>),
     Memory(MemoryAddress<'a>),
@@ -108,19 +123,95 @@ pub enum Command<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Assambler<'a, W: Write> {
+    peephole: bool,
     output: W,
     commands: Vec<Command<'a>>,
 }
 
 impl<'a, W: Write> Assambler<'a, W> {
-    pub fn new(out: W) -> Self {
+    pub fn new(out: W, peekhole: bool) -> Self {
         Self {
+            peephole: peekhole,
             output: out,
             commands: Vec::new(),
         }
     }
 
+    /// Peephole optimization to remove redundant push-pop pairs and similar patterns
+    /// - pattern:
+    ///   push X
+    ///   pop Y
+    ///   =>
+    ///   mov Y, X
+    ///
+    /// - pattern:
+    ///   push X
+    ///   push Y
+    ///   pop A
+    ///   pop B
+    ///   =>
+    ///   mov A, Y
+    ///   mov B, X
+    ///
+    /// - pattern:
+    ///   push X
+    ///   push Y
+    ///   pop A
+    ///   pop X
+    ///   =>
+    ///   mov A, Y
+    fn optimize(&mut self) {
+        let mut optimized = Vec::with_capacity(self.commands.len());
+        let mut i = 0;
+        while i < self.commands.len() {
+            match (
+                &self.commands.get(i),
+                &self.commands.get(i + 1),
+                &self.commands.get(i + 2),
+                &self.commands.get(i + 3),
+            ) {
+                (
+                    Some(Command::Push(o1)),
+                    Some(Command::Push(o2)),
+                    Some(Command::Pop(o3)),
+                    Some(Command::Pop(o4)),
+                ) => {
+                    if o3 != o2 {
+                        optimized.push(Command::Mov {
+                            dst: o3.clone(),
+                            src: o2.clone(),
+                        });
+                    }
+                    if o1 != o4 {
+                        optimized.push(Command::Mov {
+                            dst: o4.clone(),
+                            src: o1.clone(),
+                        });
+                    }
+                    i += 4;
+                }
+                (Some(Command::Push(o1)), Some(Command::Pop(o2)), _, _) => {
+                    if o1 != o2 {
+                        optimized.push(Command::Mov {
+                            dst: o2.clone(),
+                            src: o1.clone(),
+                        });
+                    }
+                    i += 2;
+                }
+                _ => {
+                    optimized.push(self.commands[i].clone());
+                    i += 1;
+                }
+            }
+        }
+        self.commands = optimized;
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
+        if self.peephole {
+            self.optimize();
+        }
         std::mem::replace(&mut self.commands, Vec::new())
             .into_iter()
             .try_for_each(|cmd| match cmd {
@@ -198,7 +289,7 @@ pub struct Compiler<W: Write> {
 impl<W: Write> Compiler<W> {
     pub fn new(output: W) -> Result<Self, Error> {
         Ok(Compiler {
-            asm: Assambler::new(output),
+            asm: Assambler::new(output, true),
             locals: HashMap::new(),
         })
     }
@@ -247,7 +338,7 @@ impl<W: Write> Compiler<W> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
-                self.asm.directive("fmt db \"%d\", 10, 0")?;
+                self.asm.directive("fmt db \"%lld\", 10, 0")?;
                 self.asm.newline()?;
                 self.asm.directive("section .text")?;
                 self.asm.directive("global main")?;
