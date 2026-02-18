@@ -14,8 +14,9 @@ run-compile source target:
 [group('testing')]
 compile-asm asm:
     nasm -f win64 -o compiled.obj {{asm}}
-    gcc -o result compiled.obj
-    rm compiled.obj
+    gcc -o result compiled.obj; rm compiled.obj
+    ./result.exe
+    rm result.exe
 
 [group('testing')]
 test filter="" $RUST_BACKTRACE="1":

@@ -74,7 +74,7 @@ impl<'a> Display for MemoryAddress<'a> {
         if self.offset == 0 {
             write!(f, "[{}]", self.base)
         } else {
-            write!(f, "[{} + {}]", self.base, self.offset)
+            write!(f, "qword [{} - {}]", self.base, self.offset)
         }
     }
 }
@@ -295,7 +295,7 @@ impl<W: Write> Compiler<W> {
     }
 
     fn offset(&self, ind: i32) -> i32 {
-        (self.locals.len() as i32 - ind) * 8 + 8
+        (self.locals.len() as i32 + 1 - ind) * 8
     }
 
     fn var_offset(&self, name: &str) -> Option<i32> {
@@ -338,7 +338,7 @@ impl<W: Write> Compiler<W> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
-                self.asm.directive("fmt db \"%lld\", 10, 0")?;
+                self.asm.directive("fmt db \"%d\", 10, 0")?;
                 self.asm.newline()?;
                 self.asm.directive("section .text")?;
                 self.asm.directive("global main")?;
@@ -346,15 +346,7 @@ impl<W: Write> Compiler<W> {
                 self.asm.newline()?;
                 self.asm.comment("main function entry point")?;
                 self.asm.label("main")?;
-                self.asm.push_cmd(Command::Sub {
-                    dst: Value::Rsp,
-                    src: Value::Integer(40),
-                });
                 self.visit_stmt(block, tree)?;
-                self.asm.push_cmd(Command::Add {
-                    dst: Value::Rsp,
-                    src: Value::Integer(40),
-                });
                 self.asm.push_cmd(Command::Xor {
                     dst: Value::Eax,
                     src: Value::Eax,
@@ -368,18 +360,19 @@ impl<W: Write> Compiler<W> {
             } => {
                 self.asm.comment("block")?;
                 self.asm.push_cmd(Command::Push(Value::Rbp.into()));
+                self.asm.push_cmd(Command::Mov {
+                    dst: Value::Rbp.into(),
+                    src: Value::Rsp.into(),
+                });
                 let defaults = declarations
                     .iter()
                     .map(|decl| self.visit_decl(decl, tree))
                     .collect::<Result<Vec<_>, Error>>()?;
                 let local_size = (self.locals.len() as i32) * 8;
-                self.asm.push_cmd(Command::Mov {
-                    dst: Value::Rbp.into(),
-                    src: Value::Rsp.into(),
-                });
+                let aligned_local_size = ((local_size + 15) / 16) * 16;
                 self.asm.push_cmd(Command::Sub {
                     dst: Value::Rsp,
-                    src: Value::Integer(local_size),
+                    src: Value::Integer(32 + aligned_local_size),
                 });
                 defaults
                     .into_iter()
@@ -390,11 +383,7 @@ impl<W: Write> Compiler<W> {
                     })?;
                 self.visit_stmt(statements, tree)?;
 
-                self.asm.push_cmd(Command::Mov {
-                    dst: Value::Rsp.into(),
-                    src: Value::Rbp.into(),
-                });
-                self.asm.push_cmd(Command::Pop(Value::Rbp.into()));
+                self.asm.directive("leave")?;
                 self.asm.comment("end block")?;
                 Ok(())
             }
