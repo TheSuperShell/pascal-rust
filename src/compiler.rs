@@ -1,10 +1,10 @@
 use crate::{
     error::Error,
-    parser::{Expr, ExprRef, Stmt, StmtRef, Tree},
+    parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree},
     tokens::TokenType,
 };
-use std::fmt::Display;
 use std::io::Write;
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
@@ -13,6 +13,7 @@ pub enum Value<'a> {
     Rbx,
     Rcx,
     Rdx,
+    Rbp,
 
     Rsp,
 
@@ -25,6 +26,7 @@ impl<'a> Display for Value<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Integer(i) => write!(f, "{i}"),
+            Value::Rbp => write!(f, "rbp"),
             Value::Rax => write!(f, "rax"),
             Value::Rbx => write!(f, "rbx"),
             Value::Rcx => write!(f, "rcx"),
@@ -37,10 +39,63 @@ impl<'a> Display for Value<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct MemoryAddress<'a> {
+    base: Value<'a>,
+    offset: i32,
+}
+
+impl<'a> MemoryAddress<'a> {
+    pub fn new(base: Value<'a>) -> Self {
+        Self { base, offset: 0 }
+    }
+    pub fn with_offset(mut self, offset: i32) -> Self {
+        self.offset = offset;
+        self
+    }
+}
+
+impl<'a> Display for MemoryAddress<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.offset == 0 {
+            write!(f, "[{}]", self.base)
+        } else {
+            write!(f, "[{} + {}]", self.base, self.offset)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Operand<'a> {
+    Register(Value<'a>),
+    Memory(MemoryAddress<'a>),
+}
+
+impl Display for Operand<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operand::Register(r) => write!(f, "{}", r),
+            Operand::Memory(m) => write!(f, "{}", m),
+        }
+    }
+}
+
+impl<'a> Into<Operand<'a>> for Value<'a> {
+    fn into(self) -> Operand<'a> {
+        Operand::Register(self)
+    }
+}
+
+impl<'a> Value<'a> {
+    pub fn with_offset(self, offset: i32) -> Operand<'a> {
+        Operand::Memory(MemoryAddress::new(self).with_offset(offset))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Command<'a> {
-    Push(Value<'a>),
-    Pop(Value<'a>),
-    Mov { dst: Value<'a>, src: Value<'a> },
+    Push(Operand<'a>),
+    Pop(Operand<'a>),
+    Mov { dst: Operand<'a>, src: Operand<'a> },
     Add { dst: Value<'a>, src: Value<'a> },
     Sub { dst: Value<'a>, src: Value<'a> },
     Imul { dst: Value<'a>, src: Value<'a> },
@@ -137,18 +192,55 @@ impl<'a, W: Write> Assambler<'a, W> {
 
 pub struct Compiler<W: Write> {
     asm: Assambler<'static, W>,
+    locals: HashMap<String, i32>,
 }
 
 impl<W: Write> Compiler<W> {
     pub fn new(output: W) -> Result<Self, Error> {
         Ok(Compiler {
             asm: Assambler::new(output),
+            locals: HashMap::new(),
         })
+    }
+
+    fn offset(&self, ind: i32) -> i32 {
+        (self.locals.len() as i32 - ind) * 8 + 8
+    }
+
+    fn var_offset(&self, name: &str) -> Option<i32> {
+        self.locals.get(name).map(|ind| self.offset(*ind))
     }
 
     pub fn compile(mut self, tree: &Tree) -> Result<W, Error> {
         self.visit_stmt(&tree.program, tree)?;
         Ok(self.asm.output()?)
+    }
+
+    fn visit_decl(&mut self, decl: &Decl, tree: &Tree) -> Result<Option<ExprRef>, Error> {
+        match decl {
+            Decl::VarDecl {
+                default_value,
+                var,
+                type_node: _,
+            } => {
+                let var_name = match tree.expr_pool.get(*var) {
+                    Expr::Var { name } => name.lexem(tree.source_code),
+                    _ => unreachable!(),
+                };
+                let offset = self.locals.len() as i32 + 1;
+                self.locals.insert(var_name.to_string(), offset);
+                Ok(*default_value)
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    fn assign_default(&mut self, ind: i32, value: &ExprRef, tree: &Tree) -> Result<(), Error> {
+        let offset = self.offset(ind);
+        self.visit_expr(value, tree)?;
+        self.asm
+            .push_cmd(Command::Pop(Value::Rbp.with_offset(offset)));
+        Ok(())
     }
 
     fn visit_stmt(&mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
@@ -180,9 +272,41 @@ impl<W: Write> Compiler<W> {
                 Ok(())
             }
             Stmt::Block {
-                declarations: _,
+                declarations,
                 statements,
-            } => self.visit_stmt(statements, tree),
+            } => {
+                self.asm.comment("block")?;
+                self.asm.push_cmd(Command::Push(Value::Rbp.into()));
+                let defaults = declarations
+                    .iter()
+                    .map(|decl| self.visit_decl(decl, tree))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let local_size = (self.locals.len() as i32) * 8;
+                self.asm.push_cmd(Command::Mov {
+                    dst: Value::Rbp.into(),
+                    src: Value::Rsp.into(),
+                });
+                self.asm.push_cmd(Command::Sub {
+                    dst: Value::Rsp,
+                    src: Value::Integer(local_size),
+                });
+                defaults
+                    .into_iter()
+                    .enumerate()
+                    .try_for_each(|(i, v)| match v {
+                        Some(value) => self.assign_default(i as i32 + 1, &value, tree),
+                        None => Ok(()),
+                    })?;
+                self.visit_stmt(statements, tree)?;
+
+                self.asm.push_cmd(Command::Mov {
+                    dst: Value::Rsp.into(),
+                    src: Value::Rbp.into(),
+                });
+                self.asm.push_cmd(Command::Pop(Value::Rbp.into()));
+                self.asm.comment("end block")?;
+                Ok(())
+            }
             Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
                 self.visit_stmt(v, tree)?;
                 self.asm.newline()?;
@@ -190,6 +314,17 @@ impl<W: Write> Compiler<W> {
             }),
             Stmt::NoOp => Ok(()),
             Stmt::Call { call } => self.visit_call(call, tree),
+            Stmt::Assign { left, right } => {
+                let var_name = match tree.expr_pool.get(*left) {
+                    Expr::Var { name } => name.lexem(tree.source_code),
+                    _ => unreachable!(),
+                };
+                let offset = self.var_offset(var_name).expect("expected value to exist");
+                self.visit_expr(right, tree)?;
+                self.asm
+                    .push_cmd(Command::Pop(Value::Rbp.with_offset(offset)));
+                Ok(())
+            }
             _ => todo!(),
         }
     }
@@ -203,14 +338,14 @@ impl<W: Write> Compiler<W> {
                 self.asm.comment("call writeln")?;
                 for arg in args {
                     self.visit_expr(arg, tree)?;
-                    self.asm.push_cmd(Command::Pop(Value::Rax));
+                    self.asm.push_cmd(Command::Pop(Value::Rax.into()));
                     self.asm.push_cmd(Command::Mov {
-                        dst: Value::Rcx,
-                        src: Value::Variable("fmt"),
+                        dst: Value::Rcx.into(),
+                        src: Value::Variable("fmt").into(),
                     });
                     self.asm.push_cmd(Command::Mov {
-                        dst: Value::Rdx,
-                        src: Value::Rax,
+                        dst: Value::Rdx.into(),
+                        src: Value::Rax.into(),
                     });
                     self.asm.push_cmd(Command::Call { name: "printf" });
                 }
@@ -222,8 +357,16 @@ impl<W: Write> Compiler<W> {
 
     fn visit_expr(&mut self, expr: &ExprRef, tree: &Tree) -> Result<(), Error> {
         match tree.expr_pool.get(*expr) {
+            Expr::Var { name } => {
+                let var_name = name.lexem(tree.source_code);
+                self.asm
+                    .push_cmd(Command::Push(Value::Rbp.with_offset(
+                        self.var_offset(var_name).expect("expected value to exist"),
+                    )));
+                Ok(())
+            }
             Expr::LiteralInteger(i) => {
-                self.asm.push_cmd(Command::Push(Value::Integer(*i)));
+                self.asm.push_cmd(Command::Push(Value::Integer(*i).into()));
                 Ok(())
             }
             Expr::UnaryOp { op, expr } => {
@@ -231,9 +374,9 @@ impl<W: Write> Compiler<W> {
                 match op {
                     TokenType::Plus => {}
                     TokenType::Minus => {
-                        self.asm.push_cmd(Command::Pop(Value::Rax));
+                        self.asm.push_cmd(Command::Pop(Value::Rax.into()));
                         self.asm.push_cmd(Command::Neg { dst: Value::Rax });
-                        self.asm.push_cmd(Command::Push(Value::Rax));
+                        self.asm.push_cmd(Command::Push(Value::Rax.into()));
                     }
                     _ => todo!(),
                 }
@@ -242,8 +385,8 @@ impl<W: Write> Compiler<W> {
             Expr::BinOp { op, left, right } => {
                 self.visit_expr(left, tree)?;
                 self.visit_expr(right, tree)?;
-                self.asm.push_cmd(Command::Pop(Value::Rbx));
-                self.asm.push_cmd(Command::Pop(Value::Rax));
+                self.asm.push_cmd(Command::Pop(Value::Rbx.into()));
+                self.asm.push_cmd(Command::Pop(Value::Rax.into()));
                 match op {
                     TokenType::Plus => {
                         self.asm.push_cmd(Command::Add {
@@ -272,7 +415,7 @@ impl<W: Write> Compiler<W> {
                     }
                     _ => todo!(),
                 }
-                self.asm.push_cmd(Command::Push(Value::Rax));
+                self.asm.push_cmd(Command::Push(Value::Rax.into()));
                 Ok(())
             }
             _ => todo!(),

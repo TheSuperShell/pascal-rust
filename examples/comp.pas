@@ -1,5 +1,6 @@
 program compiled;
-var a: integer;
+    var a: integer = 3;
+    var b: integer = 4;
 begin
-    writeln(-(1 + 2 - 3 - 10) * (40 - 5) / 2)
+    a := a + b / 2 * 3 - 3;
 end.
