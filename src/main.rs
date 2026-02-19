@@ -39,7 +39,7 @@ fn main() {
     let matches = cmd.get_matches();
     match matches.subcommand() {
         Some(("compile", sub_m)) => {
-            init_logging(sub_m.get_flag("stack"), false);
+            init_logging(false, sub_m.get_flag("scope"));
             let path = sub_m.get_one::<String>("path").unwrap();
             let target = sub_m.get_one::<String>("target").unwrap();
             match compile_into_file(path, target) {
