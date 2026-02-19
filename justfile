@@ -21,6 +21,7 @@ compile-asm asm:
 [group('asm')]
 c-asm source target="target.asm":
     gcc -O0 -masm=intel -S {{source}} -o {{target}}
+    code {{ target }}
 
 [group('testing')]
 test filter="" $RUST_BACKTRACE="1":
