@@ -11,12 +11,16 @@ run-compile source target:
     rm target/compiled.obj
     ./target/{{target}}.exe
 
-[group('testing')]
+[group('asm')]
 compile-asm asm:
     nasm -f win64 -o compiled.obj {{asm}}
     gcc -o result compiled.obj; rm compiled.obj
     ./result.exe
     rm result.exe
+
+[group('asm')]
+c-asm source target="target.asm":
+    gcc -O0 -masm=intel -S {{source}} -o {{target}}
 
 [group('testing')]
 test filter="" $RUST_BACKTRACE="1":
