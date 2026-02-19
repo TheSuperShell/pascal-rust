@@ -32,6 +32,16 @@ test filter="" $RUST_BACKTRACE="1":
 cov:
     cargo llvm-cov --open
 
-[group('testing')]
+[group('bench')]
 bench:
     cargo bench
+
+[group('bench')]
+bench-compile num="100" bench_file="benches/bench.pas":
+    just run-compile {{bench_file}} bench >/dev/null
+    benches/bench.sh {{num}} target/bench.exe
+
+[group('bench')]
+bench-interp num="100" bench_file="benches/bench.pas":
+    cargo build --release
+    benches/bench.sh {{num}} "target/release/pascal-rust.exe interp {{bench_file}}"
