@@ -8,101 +8,91 @@ use std::{collections::HashMap, fmt::Display};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub enum Value<'a> {
+/// - Rsp -> stack top pointer
+/// - Rbp -> stack base pointer
+///
+/// - 64 bits: Rax, Rbc, Rcx, Rdx, Rbp, Rsp
+/// - 32 bits: Eax, Ebx, Edx
+/// - 128 bits: Xmm0, Xmm1, Xmm2
+pub enum Register<'a> {
     Integer(i32),
+    Variable(&'a str),
+
     Rax,
     Rbx,
     Rcx,
     Rdx,
-    Rbp,
 
+    Rbp,
     Rsp,
 
     Eax,
     Ebx,
     Edx,
 
-    Variable(&'a str),
+    Xmm0,
+    Xmm1,
+    Xmm2,
 }
 
-impl<'a> Display for Value<'a> {
+impl<'a> Display for Register<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Integer(i) => write!(f, "{i}"),
-            Value::Rbp => write!(f, "rbp"),
-            Value::Rax => write!(f, "rax"),
-            Value::Rbx => write!(f, "rbx"),
-            Value::Rcx => write!(f, "rcx"),
-            Value::Rdx => write!(f, "rdx"),
-            Value::Rsp => write!(f, "rsp"),
-            Value::Eax => write!(f, "eax"),
-            Value::Ebx => write!(f, "ebx"),
-            Value::Edx => write!(f, "edx"),
-            Value::Variable(v) => write!(f, "{}", v),
+            Register::Integer(i) => write!(f, "{i}"),
+            Register::Variable(v) => write!(f, "{}", v),
+            Register::Rax => write!(f, "rax"),
+            Register::Rbx => write!(f, "rbx"),
+            Register::Rdx => write!(f, "rdx"),
+            Register::Rbp => write!(f, "rbp"),
+            Register::Rcx => write!(f, "rcx"),
+            Register::Rsp => write!(f, "rsp"),
+            Register::Eax => write!(f, "eax"),
+            Register::Ebx => write!(f, "ebx"),
+            Register::Edx => write!(f, "edx"),
+            Register::Xmm0 => write!(f, "xmm0"),
+            Register::Xmm1 => write!(f, "xmm1"),
+            Register::Xmm2 => write!(f, "xmm2"),
         }
     }
 }
 
-impl PartialEq for Value<'_> {
+impl PartialEq for Register<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Integer(i1), Value::Integer(i2)) => i1 == i2,
-            (Value::Variable(v1), Value::Variable(v2)) => v1 == v2,
+            (Register::Integer(i1), Register::Integer(i2)) => i1 == i2,
+            (Register::Variable(v1), Register::Variable(v2)) => v1 == v2,
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MemoryAddress<'a> {
-    base: Value<'a>,
-    offset: i32,
-}
-
-impl<'a> MemoryAddress<'a> {
-    pub fn new(base: Value<'a>) -> Self {
-        Self { base, offset: 0 }
-    }
-    pub fn with_offset(mut self, offset: i32) -> Self {
-        self.offset = offset;
-        self
-    }
-}
-
-impl<'a> Display for MemoryAddress<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.offset == 0 {
-            write!(f, "[{}]", self.base)
-        } else {
-            write!(f, "qword [{} - {}]", self.base, self.offset)
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Operand<'a> {
-    Register(Value<'a>),
-    Memory(MemoryAddress<'a>),
+    Register(Register<'a>),
+    Memory { base: Register<'a>, offset: i32 },
 }
 
 impl Display for Operand<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Operand::Register(r) => write!(f, "{}", r),
-            Operand::Memory(m) => write!(f, "{}", m),
+            Operand::Memory { base, offset } => match offset {
+                0 => write!(f, "dword [{}]", base),
+                _ => write!(f, "dword [{} - {}]", base, offset),
+            },
         }
     }
 }
 
-impl<'a> Into<Operand<'a>> for Value<'a> {
+impl<'a> Into<Operand<'a>> for Register<'a> {
     fn into(self) -> Operand<'a> {
         Operand::Register(self)
     }
 }
 
-impl<'a> Value<'a> {
+impl<'a> Register<'a> {
     pub fn with_offset(self, offset: i32) -> Operand<'a> {
-        Operand::Memory(MemoryAddress::new(self).with_offset(offset))
+        Operand::Memory { base: self, offset }
     }
 }
 
@@ -110,14 +100,33 @@ impl<'a> Value<'a> {
 pub enum Command<'a> {
     Push(Operand<'a>),
     Pop(Operand<'a>),
-    Mov { dst: Operand<'a>, src: Operand<'a> },
-    Add { dst: Value<'a>, src: Value<'a> },
-    Sub { dst: Value<'a>, src: Value<'a> },
-    Imul { dst: Value<'a>, src: Value<'a> },
-    Div(Value<'a>),
-    Neg { dst: Value<'a> },
-    Xor { dst: Value<'a>, src: Value<'a> },
-    Call { name: &'a str },
+    Mov {
+        dst: Operand<'a>,
+        src: Operand<'a>,
+    },
+    Add {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
+    Sub {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
+    Imul {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
+    Div(Register<'a>),
+    Neg {
+        dst: Register<'a>,
+    },
+    Xor {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
+    Call {
+        name: &'a str,
+    },
     Ret,
 }
 
@@ -295,7 +304,7 @@ impl<W: Write> Compiler<W> {
     }
 
     fn offset(&self, ind: i32) -> i32 {
-        (self.locals.len() as i32 + 1 - ind) * 8
+        (self.locals.len() as i32 + 1 - ind) * 4
     }
 
     fn var_offset(&self, name: &str) -> Option<i32> {
@@ -329,8 +338,11 @@ impl<W: Write> Compiler<W> {
     fn assign_default(&mut self, ind: i32, value: &ExprRef, tree: &Tree) -> Result<(), Error> {
         let offset = self.offset(ind);
         self.visit_expr(value, tree)?;
-        self.asm
-            .push_cmd(Command::Pop(Value::Rbp.with_offset(offset)));
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        self.asm.push_cmd(Command::Mov {
+            dst: Register::Rbp.with_offset(offset),
+            src: Register::Eax.into(),
+        });
         Ok(())
     }
 
@@ -338,7 +350,7 @@ impl<W: Write> Compiler<W> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
-                self.asm.directive("fmt db \"%d\", 10, 0")?;
+                self.asm.directive("fmt db \"> %d\", 10, 0")?;
                 self.asm.newline()?;
                 self.asm.directive("section .text")?;
                 self.asm.directive("global main")?;
@@ -348,8 +360,8 @@ impl<W: Write> Compiler<W> {
                 self.asm.label("main")?;
                 self.visit_stmt(block, tree)?;
                 self.asm.push_cmd(Command::Xor {
-                    dst: Value::Eax,
-                    src: Value::Eax,
+                    dst: Register::Eax,
+                    src: Register::Eax,
                 });
                 self.asm.push_cmd(Command::Ret);
                 Ok(())
@@ -359,20 +371,20 @@ impl<W: Write> Compiler<W> {
                 statements,
             } => {
                 self.asm.comment("block")?;
-                self.asm.push_cmd(Command::Push(Value::Rbp.into()));
+                self.asm.push_cmd(Command::Push(Register::Rbp.into()));
                 self.asm.push_cmd(Command::Mov {
-                    dst: Value::Rbp.into(),
-                    src: Value::Rsp.into(),
+                    dst: Register::Rbp.into(),
+                    src: Register::Rsp.into(),
                 });
                 let defaults = declarations
                     .iter()
                     .map(|decl| self.visit_decl(decl, tree))
                     .collect::<Result<Vec<_>, Error>>()?;
-                let local_size = (self.locals.len() as i32) * 8;
+                let local_size = (self.locals.len() as i32) * 4;
                 let aligned_local_size = ((local_size + 15) / 16) * 16;
                 self.asm.push_cmd(Command::Sub {
-                    dst: Value::Rsp,
-                    src: Value::Integer(32 + aligned_local_size),
+                    dst: Register::Rsp,
+                    src: Register::Integer(32 + aligned_local_size),
                 });
                 defaults
                     .into_iter()
@@ -401,8 +413,11 @@ impl<W: Write> Compiler<W> {
                 };
                 let offset = self.var_offset(var_name).expect("expected value to exist");
                 self.visit_expr(right, tree)?;
-                self.asm
-                    .push_cmd(Command::Pop(Value::Rbp.with_offset(offset)));
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbp.with_offset(offset),
+                    src: Register::Eax.into(),
+                });
                 Ok(())
             }
             _ => todo!(),
@@ -418,14 +433,14 @@ impl<W: Write> Compiler<W> {
                 self.asm.comment("call writeln")?;
                 for arg in args {
                     self.visit_expr(arg, tree)?;
-                    self.asm.push_cmd(Command::Pop(Value::Rax.into()));
+                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                     self.asm.push_cmd(Command::Mov {
-                        dst: Value::Rcx.into(),
-                        src: Value::Variable("fmt").into(),
+                        dst: Register::Rcx.into(),
+                        src: Register::Variable("fmt").into(),
                     });
                     self.asm.push_cmd(Command::Mov {
-                        dst: Value::Rdx.into(),
-                        src: Value::Rax.into(),
+                        dst: Register::Rdx.into(),
+                        src: Register::Rax.into(),
                     });
                     self.asm.push_cmd(Command::Call { name: "printf" });
                 }
@@ -439,14 +454,17 @@ impl<W: Write> Compiler<W> {
         match tree.expr_pool.get(*expr) {
             Expr::Var { name } => {
                 let var_name = name.lexem(tree.source_code);
-                self.asm
-                    .push_cmd(Command::Push(Value::Rbp.with_offset(
-                        self.var_offset(var_name).expect("expected value to exist"),
-                    )));
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Eax.into(),
+                    src: Register::Rbp
+                        .with_offset(self.var_offset(var_name).expect("expected value to exist")),
+                });
+                self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 Ok(())
             }
             Expr::LiteralInteger(i) => {
-                self.asm.push_cmd(Command::Push(Value::Integer(*i).into()));
+                self.asm
+                    .push_cmd(Command::Push(Register::Integer(*i).into()));
                 Ok(())
             }
             Expr::UnaryOp { op, expr } => {
@@ -454,9 +472,9 @@ impl<W: Write> Compiler<W> {
                 match op {
                     TokenType::Plus => {}
                     TokenType::Minus => {
-                        self.asm.push_cmd(Command::Pop(Value::Rax.into()));
-                        self.asm.push_cmd(Command::Neg { dst: Value::Rax });
-                        self.asm.push_cmd(Command::Push(Value::Rax.into()));
+                        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                        self.asm.push_cmd(Command::Neg { dst: Register::Rax });
+                        self.asm.push_cmd(Command::Push(Register::Rax.into()));
                     }
                     _ => todo!(),
                 }
@@ -465,37 +483,37 @@ impl<W: Write> Compiler<W> {
             Expr::BinOp { op, left, right } => {
                 self.visit_expr(left, tree)?;
                 self.visit_expr(right, tree)?;
-                self.asm.push_cmd(Command::Pop(Value::Rbx.into()));
-                self.asm.push_cmd(Command::Pop(Value::Rax.into()));
+                self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 match op {
                     TokenType::Plus => {
                         self.asm.push_cmd(Command::Add {
-                            dst: Value::Rax,
-                            src: Value::Rbx,
+                            dst: Register::Rax,
+                            src: Register::Rbx,
                         });
                     }
                     TokenType::Minus => {
                         self.asm.push_cmd(Command::Sub {
-                            dst: Value::Rax,
-                            src: Value::Rbx,
+                            dst: Register::Rax,
+                            src: Register::Rbx,
                         });
                     }
                     TokenType::Mul => {
                         self.asm.push_cmd(Command::Imul {
-                            dst: Value::Rax,
-                            src: Value::Rbx,
+                            dst: Register::Rax,
+                            src: Register::Rbx,
                         });
                     }
                     TokenType::IntegerDiv => {
                         self.asm.push_cmd(Command::Xor {
-                            dst: Value::Rdx,
-                            src: Value::Rdx,
+                            dst: Register::Rdx,
+                            src: Register::Rdx,
                         });
-                        self.asm.push_cmd(Command::Div(Value::Rbx));
+                        self.asm.push_cmd(Command::Div(Register::Rbx));
                     }
                     _ => todo!(),
                 }
-                self.asm.push_cmd(Command::Push(Value::Rax.into()));
+                self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 Ok(())
             }
             _ => todo!(),
