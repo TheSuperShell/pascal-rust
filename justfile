@@ -1,15 +1,16 @@
 build:
     cargo build
 
-run source target:
-    cargo run {{ source }} {{ target }}
+run source *ARGS:
+    cargo run interp {{source}} {{ARGS}}
 
-run-compile source target:
-    cargo run {{source}} target/{{target}}.asm
+run-compile source target *ARGS:
+    cargo run compile {{source}} target/{{target}}.asm {{ARGS}}
     nasm -f win64 -o target/compiled.obj target/{{target}}.asm
     gcc -o target/{{target}}.exe target/compiled.obj
     rm target/compiled.obj
     ./target/{{target}}.exe
+
 
 [group('asm')]
 compile-asm asm:

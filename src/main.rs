@@ -1,5 +1,5 @@
-use clap::{arg, command};
-use pascal_rust::compile_into_file;
+use clap::{Command, arg, command};
+use pascal_rust::{compile_into_file, interprete};
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -20,20 +20,47 @@ pub fn init_logging(stack: bool, scope: bool) {
 }
 
 fn main() {
-    let matches = command!()
-        .arg(arg!(<path> "Path of the scrip"))
-        .arg(arg!(<target> "Compilation target"))
-        .arg(arg!(--scope "Turn on scope logging"))
-        .arg(arg!(--stack "Turn on stack logging"))
-        .get_matches();
-    let path = matches.get_one::<String>("path").unwrap();
-    let target = matches.get_one::<String>("target").unwrap();
-    init_logging(matches.get_flag("stack"), matches.get_flag("scope"));
-    match compile_into_file(path, target) {
-        Err(e) => {
-            error!(target: "pascal", "{e}");
-            std::process::exit(1);
+    let cmd = command!()
+        .subcommand(
+            Command::new("compile")
+                .about("Compile a pascal file")
+                .arg(arg!(<path> "Path of the scrip"))
+                .arg(arg!(<target> "Compilation target"))
+                .arg(arg!(--scope "Turn on scope logging")),
+        )
+        .subcommand(
+            Command::new("interp")
+                .about("Interperet a pascal file")
+                .arg(arg!(<path> "Path of the script"))
+                .arg(arg!(--scope "Turn on scope logging"))
+                .arg(arg!(--stack "Turn on stack logging")),
+        );
+    let help_message = cmd.get_about().cloned();
+    let matches = cmd.get_matches();
+    match matches.subcommand() {
+        Some(("compile", sub_m)) => {
+            init_logging(sub_m.get_flag("stack"), false);
+            let path = sub_m.get_one::<String>("path").unwrap();
+            let target = sub_m.get_one::<String>("target").unwrap();
+            match compile_into_file(path, target) {
+                Err(e) => {
+                    error!(target: "pascal", "{e}");
+                    std::process::exit(1);
+                }
+                Ok(_) => {}
+            };
         }
-        Ok(_) => {}
-    };
+        Some(("interp", sub_m)) => {
+            init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
+            let path = sub_m.get_one::<String>("path").unwrap();
+            match interprete(path) {
+                Err(e) => {
+                    error!(target: "pascal", "{e}");
+                    std::process::exit(1)
+                }
+                Ok(_) => {}
+            }
+        }
+        _ => println!("{}", help_message.unwrap_or_default()),
+    }
 }
