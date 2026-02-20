@@ -13,6 +13,7 @@ use std::{collections::HashMap, fmt::Display};
 ///
 /// - 64 bits: Rax, Rbc, Rcx, Rdx, Rbp, Rsp
 /// - 32 bits: Eax, Ebx, Edx
+/// - 8 bits: Al, Bl
 /// - 128 bits: Xmm0, Xmm1, Xmm2
 pub enum Register<'a> {
     Integer(i32),
@@ -29,6 +30,9 @@ pub enum Register<'a> {
     Eax,
     Ebx,
     Edx,
+
+    Al,
+    Bl,
 
     Xmm0,
     Xmm1,
@@ -49,6 +53,8 @@ impl<'a> Display for Register<'a> {
             Register::Eax => write!(f, "eax"),
             Register::Ebx => write!(f, "ebx"),
             Register::Edx => write!(f, "edx"),
+            Register::Al => write!(f, "al"),
+            Register::Bl => write!(f, "bl"),
             Register::Xmm0 => write!(f, "xmm0"),
             Register::Xmm1 => write!(f, "xmm1"),
             Register::Xmm2 => write!(f, "xmm2"),
@@ -167,6 +173,14 @@ pub enum Command<'a> {
         dst: Register<'a>,
         src: Register<'a>,
     },
+    And {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
+    Or {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
     Lea {
         dst: Register<'a>,
         src: Memory<'a>,
@@ -189,6 +203,8 @@ pub enum Command<'a> {
     Jl(String),
     Jle(String),
     Jmp(String),
+    Sete(Register<'a>),
+    Setne(Register<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -315,6 +331,8 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Xor { dst, src } => {
                     writeln!(self.output, "xor {}, {}", dst, src)
                 }
+                Command::And { dst, src } => writeln!(self.output, "and {}, {}", dst, src),
+                Command::Or { dst, src } => writeln!(self.output, "or {}, {}", dst, src),
                 Command::Pop(v) => {
                     writeln!(self.output, "pop {}", v)
                 }
@@ -329,6 +347,8 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Jle(l) => writeln!(self.output, "jle {l}"),
                 Command::Jne(l) => writeln!(self.output, "jne {l}"),
                 Command::Jmp(l) => writeln!(self.output, "jmp {l}"),
+                Command::Sete(r) => writeln!(self.output, "sete {}", r),
+                Command::Setne(r) => writeln!(self.output, "setne {}", r),
             })
     }
 
@@ -377,13 +397,9 @@ impl<'a, W: Write> Compiler<'a, W> {
         })
     }
 
-    fn allocate_ls(&mut self, amount: u64) -> Vec<String> {
-        let result = (self.current_l_num..self.current_l_num + amount)
-            .into_iter()
-            .map(|v| format!(".L{v}"))
-            .collect();
-        self.current_l_num += amount;
-        result
+    fn next_l(&mut self, slug: &str) -> String {
+        self.current_l_num += 1;
+        format!(".L{}_{slug}", self.current_l_num - 1)
     }
 
     fn offset(&self, ind: i32) -> i32 {
@@ -484,7 +500,6 @@ impl<'a, W: Write> Compiler<'a, W> {
             }
             Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
                 self.visit_stmt(v, tree)?;
-                self.asm.newline()?;
                 Ok(())
             }),
             Stmt::NoOp => Ok(()),
@@ -501,6 +516,61 @@ impl<'a, W: Write> Compiler<'a, W> {
                     dst: Register::Rbp.with_offset(offset).into(),
                     src: Register::Eax.into(),
                 });
+                Ok(())
+            }
+            Stmt::If {
+                cond,
+                elifs,
+                else_statement,
+            } => {
+                self.visit_expr(&cond.cond, tree)?;
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                self.asm.push_cmd(Command::Cmp {
+                    op1: Register::Rax.into(),
+                    op2: Register::Integer(0).into(),
+                });
+                let mut else_l = self.next_l("else");
+                let end_l = self.next_l("endif");
+                self.asm.push_cmd(Command::Je(else_l.clone()));
+                self.visit_stmt(&cond.expr, tree)?;
+                let mut elifs = elifs.iter();
+                while let Some(elif) = elifs.next() {
+                    self.asm.push_cmd(Command::Jmp(end_l.clone()));
+                    self.asm.label(&else_l)?;
+                    else_l = self.next_l("else");
+                    self.visit_expr(&elif.cond, tree)?;
+                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                    self.asm.push_cmd(Command::Cmp {
+                        op1: Register::Rax.into(),
+                        op2: Register::Integer(0).into(),
+                    });
+                    self.asm.push_cmd(Command::Je(else_l.clone()));
+                    self.visit_stmt(&elif.expr, tree)?;
+                }
+                if let Some(else_stmt) = else_statement {
+                    self.asm.push_cmd(Command::Jmp(end_l.clone()));
+                    self.asm.label(&else_l)?;
+                    self.visit_stmt(else_stmt, tree)?;
+                    self.asm.label(&end_l)?;
+                } else {
+                    self.asm.label(&else_l)?;
+                }
+                Ok(())
+            }
+            Stmt::While { cond, body } => {
+                let loop_l = self.next_l("while");
+                let loop_end_l = self.next_l("endwhile");
+                self.asm.label(&loop_l)?;
+                self.visit_expr(cond, tree)?;
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                self.asm.push_cmd(Command::Cmp {
+                    op1: Register::Rax.into(),
+                    op2: Register::Integer(0).into(),
+                });
+                self.asm.push_cmd(Command::Je(loop_end_l.clone()));
+                self.visit_stmt(body, tree)?;
+                self.asm.push_cmd(Command::Jmp(loop_l));
+                self.asm.label(&loop_end_l)?;
                 Ok(())
             }
             Stmt::For {
@@ -522,8 +592,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.visit_expr(end, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Push(Register::Rax.into()));
-                let ls = self.allocate_ls(2);
-                self.asm.label(&ls[0])?;
+                let l1 = self.next_l("for_body");
+                self.asm.label(&l1)?;
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Eax.into(),
                     src: Register::Rbp.with_offset(var_offset).into(),
@@ -537,10 +607,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                     op1: Register::Eax.into(),
                     op2: Memory::new(Register::Rsp).into(),
                 });
-                self.asm.push_cmd(Command::Jg(ls[1].clone()));
+                let l2 = self.next_l("endfor");
+                self.asm.push_cmd(Command::Jg(l2.clone()));
                 self.visit_stmt(body, tree)?;
-                self.asm.push_cmd(Command::Jmp(ls[0].clone()));
-                self.asm.label(&ls[1])?;
+                self.asm.push_cmd(Command::Jmp(l1.clone()));
+                self.asm.label(&l2)?;
                 self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
                 Ok(())
             }
@@ -604,6 +675,15 @@ impl<'a, W: Write> Compiler<'a, W> {
                     .push_cmd(Command::Push(Register::Integer(*i).into()));
                 Ok(())
             }
+            Expr::LiteralBool(b) => {
+                let val = match b {
+                    true => 1,
+                    false => 0,
+                };
+                self.asm
+                    .push_cmd(Command::Push(Register::Integer(val).into()));
+                Ok(())
+            }
             Expr::UnaryOp { op, expr } => {
                 self.visit_expr(expr, tree)?;
                 match op {
@@ -648,12 +728,42 @@ impl<'a, W: Write> Compiler<'a, W> {
                         });
                         self.asm.push_cmd(Command::Div(Register::Rbx));
                     }
-                    _ => todo!(),
+                    TokenType::And => {
+                        self.asm.push_cmd(Command::And {
+                            dst: Register::Al,
+                            src: Register::Bl,
+                        });
+                    }
+                    TokenType::Or => {
+                        self.asm.push_cmd(Command::Or {
+                            dst: Register::Al,
+                            src: Register::Bl,
+                        });
+                    }
+                    TokenType::Equal | TokenType::NotEqual => self.visit_comparison(&op)?,
+                    _ => unreachable!(),
                 }
                 self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 Ok(())
             }
             _ => todo!(),
         }
+    }
+
+    fn visit_comparison(&mut self, cmp_token: &TokenType) -> Result<(), Error> {
+        self.asm.push_cmd(Command::Cmp {
+            op1: Register::Rax.into(),
+            op2: Register::Rbx.into(),
+        });
+        match cmp_token {
+            TokenType::Equal => {
+                self.asm.push_cmd(Command::Sete(Register::Al));
+            }
+            TokenType::NotEqual => {
+                self.asm.push_cmd(Command::Setne(Register::Al));
+            }
+            _ => unreachable!(),
+        };
+        Ok(())
     }
 }
