@@ -1,5 +1,6 @@
 program compiled;
-    var b: integer = -1;
+    var b: integer;
 begin
-    writeln(b)
+    for b := 0 to 10 do
+        writeln(b);
 end.

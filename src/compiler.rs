@@ -67,19 +67,42 @@ impl PartialEq for Register<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Memory<'a> {
+    base: Register<'a>,
+    offset: i32,
+}
+
+impl<'a> Memory<'a> {
+    pub fn new(base: Register<'a>) -> Self {
+        Self { base, offset: 0 }
+    }
+
+    pub fn with_offset(mut self, offset: i32) -> Self {
+        self.offset = offset;
+        self
+    }
+}
+
+impl Display for Memory<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.offset {
+            0 => write!(f, "dword [{}]", self.base),
+            _ => write!(f, "dword [{} - {}]", self.base, self.offset),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operand<'a> {
     Register(Register<'a>),
-    Memory { base: Register<'a>, offset: i32 },
+    Memory(Memory<'a>),
 }
 
 impl Display for Operand<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Operand::Register(r) => write!(f, "{}", r),
-            Operand::Memory { base, offset } => match offset {
-                0 => write!(f, "dword [{}]", base),
-                _ => write!(f, "dword [{} - {}]", base, offset),
-            },
+            Operand::Memory(mem) => write!(f, "{}", mem),
         }
     }
 }
@@ -90,13 +113,35 @@ impl<'a> Into<Operand<'a>> for Register<'a> {
     }
 }
 
+impl<'a> Into<Operand<'a>> for Memory<'a> {
+    fn into(self) -> Operand<'a> {
+        Operand::Memory(self)
+    }
+}
+
 impl<'a> Register<'a> {
-    pub fn with_offset(self, offset: i32) -> Operand<'a> {
-        Operand::Memory { base: self, offset }
+    pub fn with_offset(self, offset: i32) -> Memory<'a> {
+        Memory::new(self).with_offset(offset)
     }
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+/// - Push(op) -> push op to the stack
+/// - Pop(op) -> pop value from the stack into op
+/// - Mov { dst, src } -> move value from src into dst
+/// - Add { dst, src } -> add dst and src values and save result in dst
+/// - Sub { dst, src } -> subtract src from dst and save result in dst
+/// - Imul { dst, src } -> multiply src and dst values and save result in dst
+/// - Div(reg) -> divide value in RAX by reg value
+/// - Neg(reg) -> make value in reg negative
+/// - Xor { dst, src } -> XOR operation on dst and src values and save result in dst
+/// - Lea { dst, src } -> save address of src to dst
+/// - Call { name } -> call a function by the name
+/// - Ret -> return (exit)
+/// - Cmp { op1, op1 } -> compare op1 and op2 values
+/// - Je(l) -> jump to l if previous cmp returns equals
+/// - Jne(l) -> jump to l if previous cmp returns not equals
 pub enum Command<'a> {
     Push(Operand<'a>),
     Pop(Operand<'a>),
@@ -117,17 +162,33 @@ pub enum Command<'a> {
         src: Register<'a>,
     },
     Div(Register<'a>),
-    Neg {
-        dst: Register<'a>,
-    },
+    Neg(Register<'a>),
     Xor {
         dst: Register<'a>,
         src: Register<'a>,
     },
+    Lea {
+        dst: Register<'a>,
+        src: Memory<'a>,
+    },
+    Inc(Register<'a>),
+    Dec(Register<'a>),
     Call {
         name: &'a str,
     },
     Ret,
+
+    Cmp {
+        op1: Operand<'a>,
+        op2: Operand<'a>,
+    },
+    Je(String),
+    Jne(String),
+    Jg(String),
+    Jge(String),
+    Jl(String),
+    Jle(String),
+    Jmp(String),
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +303,7 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Div(v) => {
                     writeln!(self.output, "div {}", v)
                 }
-                Command::Neg { dst } => {
+                Command::Neg(dst) => {
                     writeln!(self.output, "neg {}", dst)
                 }
                 Command::Ret => {
@@ -257,6 +318,17 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Pop(v) => {
                     writeln!(self.output, "pop {}", v)
                 }
+                Command::Inc(reg) => writeln!(self.output, "inc {}", reg),
+                Command::Dec(reg) => writeln!(self.output, "dec {}", reg),
+                Command::Lea { dst, src } => writeln!(self.output, "lea {}, {}", dst, src),
+                Command::Cmp { op1, op2 } => writeln!(self.output, "cmp {}, {}", op1, op2),
+                Command::Je(l) => writeln!(self.output, "je {l}"),
+                Command::Jg(l) => writeln!(self.output, "jg {l}"),
+                Command::Jge(l) => writeln!(self.output, "jge {l}"),
+                Command::Jl(l) => writeln!(self.output, "jl {l}"),
+                Command::Jle(l) => writeln!(self.output, "jle {l}"),
+                Command::Jne(l) => writeln!(self.output, "jne {l}"),
+                Command::Jmp(l) => writeln!(self.output, "jmp {l}"),
             })
     }
 
@@ -290,17 +362,28 @@ impl<'a, W: Write> Assambler<'a, W> {
     }
 }
 
-pub struct Compiler<W: Write> {
-    asm: Assambler<'static, W>,
+pub struct Compiler<'a, W: Write> {
+    asm: Assambler<'a, W>,
     locals: HashMap<String, i32>,
+    current_l_num: u64,
 }
 
-impl<W: Write> Compiler<W> {
+impl<'a, W: Write> Compiler<'a, W> {
     pub fn new(output: W) -> Result<Self, Error> {
         Ok(Compiler {
             asm: Assambler::new(output, true),
             locals: HashMap::new(),
+            current_l_num: 0,
         })
+    }
+
+    fn allocate_ls(&mut self, amount: u64) -> Vec<String> {
+        let result = (self.current_l_num..self.current_l_num + amount)
+            .into_iter()
+            .map(|v| format!(".L{v}"))
+            .collect();
+        self.current_l_num += amount;
+        result
     }
 
     fn offset(&self, ind: i32) -> i32 {
@@ -340,13 +423,13 @@ impl<W: Write> Compiler<W> {
         self.visit_expr(value, tree)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Mov {
-            dst: Register::Rbp.with_offset(offset),
+            dst: Register::Rbp.with_offset(offset).into(),
             src: Register::Eax.into(),
         });
         Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
+    fn visit_stmt<'s>(&'s mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
@@ -415,9 +498,50 @@ impl<W: Write> Compiler<W> {
                 self.visit_expr(right, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbp.with_offset(offset),
+                    dst: Register::Rbp.with_offset(offset).into(),
                     src: Register::Eax.into(),
                 });
+                Ok(())
+            }
+            Stmt::For {
+                var,
+                init,
+                end,
+                body,
+            } => {
+                let var_offset = self
+                    .var_offset(var.lexem(tree.source_code))
+                    .expect("var should exist");
+                self.visit_expr(init, tree)?;
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                self.asm.push_cmd(Command::Dec(Register::Eax));
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbp.with_offset(var_offset).into(),
+                    src: Register::Eax.into(),
+                });
+                self.visit_expr(end, tree)?;
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                self.asm.push_cmd(Command::Push(Register::Rax.into()));
+                let ls = self.allocate_ls(2);
+                self.asm.label(&ls[0])?;
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Eax.into(),
+                    src: Register::Rbp.with_offset(var_offset).into(),
+                });
+                self.asm.push_cmd(Command::Inc(Register::Eax.into()));
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbp.with_offset(var_offset).into(),
+                    src: Register::Eax.into(),
+                });
+                self.asm.push_cmd(Command::Cmp {
+                    op1: Register::Eax.into(),
+                    op2: Memory::new(Register::Rsp).into(),
+                });
+                self.asm.push_cmd(Command::Jg(ls[1].clone()));
+                self.visit_stmt(body, tree)?;
+                self.asm.push_cmd(Command::Jmp(ls[0].clone()));
+                self.asm.label(&ls[1])?;
+                self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
                 Ok(())
             }
             _ => todo!(),
@@ -442,7 +566,15 @@ impl<W: Write> Compiler<W> {
                         dst: Register::Rdx.into(),
                         src: Register::Rax.into(),
                     });
+                    self.asm.push_cmd(Command::Sub {
+                        dst: Register::Rsp,
+                        src: Register::Integer(32),
+                    });
                     self.asm.push_cmd(Command::Call { name: "printf" });
+                    self.asm.push_cmd(Command::Add {
+                        dst: Register::Rsp,
+                        src: Register::Integer(32),
+                    });
                 }
                 Ok(())
             }
@@ -457,7 +589,12 @@ impl<W: Write> Compiler<W> {
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Eax.into(),
                     src: Register::Rbp
-                        .with_offset(self.var_offset(var_name).expect("expected value to exist")),
+                        .with_offset(
+                            self.var_offset(var_name)
+                                .expect("expected value to exist")
+                                .into(),
+                        )
+                        .into(),
                 });
                 self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 Ok(())
@@ -473,7 +610,7 @@ impl<W: Write> Compiler<W> {
                     TokenType::Plus => {}
                     TokenType::Minus => {
                         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                        self.asm.push_cmd(Command::Neg { dst: Register::Rax });
+                        self.asm.push_cmd(Command::Neg(Register::Rax));
                         self.asm.push_cmd(Command::Push(Register::Rax.into()));
                     }
                     _ => todo!(),
