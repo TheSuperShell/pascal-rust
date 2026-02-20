@@ -155,6 +155,10 @@ enum Command<'a> {
         dst: Operand<'a>,
         src: Operand<'a>,
     },
+    Movzx {
+        dst: Register<'a>,
+        src: Register<'a>,
+    },
     Add {
         dst: Register<'a>,
         src: Register<'a>,
@@ -181,6 +185,7 @@ enum Command<'a> {
         dst: Register<'a>,
         src: Register<'a>,
     },
+    Not(Register<'a>),
     Lea {
         dst: Register<'a>,
         src: Memory<'a>,
@@ -193,6 +198,10 @@ enum Command<'a> {
     Ret,
 
     Cmp {
+        op1: Operand<'a>,
+        op2: Operand<'a>,
+    },
+    Test {
         op1: Operand<'a>,
         op2: Operand<'a>,
     },
@@ -307,6 +316,7 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Mov { dst, src } => {
                     writeln!(self.output, "mov {}, {}", dst, src)
                 }
+                Command::Movzx { dst, src } => writeln!(self.output, "movzx {}, {}", dst, src),
                 Command::Add { dst, src } => {
                     writeln!(self.output, "add {}, {}", dst, src)
                 }
@@ -331,6 +341,10 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Xor { dst, src } => {
                     writeln!(self.output, "xor {}, {}", dst, src)
                 }
+                Command::Not(r) => {
+                    writeln!(self.output, "not {}", r)
+                }
+                Command::Test { op1, op2 } => writeln!(self.output, "test {}, {}", op1, op2),
                 Command::And { dst, src } => writeln!(self.output, "and {}, {}", dst, src),
                 Command::Or { dst, src } => writeln!(self.output, "or {}, {}", dst, src),
                 Command::Pop(v) => {
@@ -720,15 +734,25 @@ impl<'a, W: Write> Compiler<'a, W> {
             }
             Expr::UnaryOp { op, expr } => {
                 self.visit_expr(expr, tree)?;
+                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 match op {
                     TokenType::Plus => {}
                     TokenType::Minus => {
-                        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                         self.asm.push_cmd(Command::Neg(Register::Rax));
-                        self.asm.push_cmd(Command::Push(Register::Rax.into()));
+                    }
+                    TokenType::Not => {
+                        self.asm.push_cmd(Command::Xor {
+                            dst: Register::Al,
+                            src: Register::Integer(1),
+                        });
+                        self.asm.push_cmd(Command::Movzx {
+                            dst: Register::Rax,
+                            src: Register::Al,
+                        });
                     }
                     _ => todo!(),
                 }
+                self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 Ok(())
             }
             Expr::BinOp { op, left, right } => {
