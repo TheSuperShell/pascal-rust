@@ -15,7 +15,7 @@ use std::{collections::HashMap, fmt::Display};
 /// - 32 bits: Eax, Ebx, Edx
 /// - 8 bits: Al, Bl
 /// - 128 bits: Xmm0, Xmm1, Xmm2
-pub enum Register<'a> {
+enum Register<'a> {
     Integer(i32),
     Variable(&'a str),
 
@@ -73,7 +73,7 @@ impl PartialEq for Register<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Memory<'a> {
+struct Memory<'a> {
     base: Register<'a>,
     offset: i32,
 }
@@ -99,7 +99,7 @@ impl Display for Memory<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Operand<'a> {
+enum Operand<'a> {
     Register(Register<'a>),
     Memory(Memory<'a>),
 }
@@ -148,7 +148,7 @@ impl<'a> Register<'a> {
 /// - Cmp { op1, op1 } -> compare op1 and op2 values
 /// - Je(l) -> jump to l if previous cmp returns equals
 /// - Jne(l) -> jump to l if previous cmp returns not equals
-pub enum Command<'a> {
+enum Command<'a> {
     Push(Operand<'a>),
     Pop(Operand<'a>),
     Mov {
@@ -208,7 +208,7 @@ pub enum Command<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Assambler<'a, W: Write> {
+struct Assambler<'a, W: Write> {
     peephole: bool,
     output: W,
     commands: Vec<Command<'a>>,
@@ -386,6 +386,8 @@ pub struct Compiler<'a, W: Write> {
     asm: Assambler<'a, W>,
     locals: HashMap<String, i32>,
     current_l_num: u64,
+    loop_exit_labels: Vec<String>,
+    loop_start_labels: Vec<String>,
 }
 
 impl<'a, W: Write> Compiler<'a, W> {
@@ -394,12 +396,24 @@ impl<'a, W: Write> Compiler<'a, W> {
             asm: Assambler::new(output, true),
             locals: HashMap::new(),
             current_l_num: 0,
+            loop_exit_labels: Vec::new(),
+            loop_start_labels: Vec::new(),
         })
     }
 
     fn next_l(&mut self, slug: &str) -> String {
         self.current_l_num += 1;
         format!(".L{}_{slug}", self.current_l_num - 1)
+    }
+
+    fn enter_loop(&mut self, start_label: &str, end_label: &str) {
+        self.loop_start_labels.push(start_label.to_string());
+        self.loop_exit_labels.push(end_label.to_string());
+    }
+
+    fn exit_loop(&mut self) {
+        self.loop_exit_labels.pop();
+        self.loop_start_labels.pop();
     }
 
     fn offset(&self, ind: i32) -> i32 {
@@ -445,7 +459,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
-    fn visit_stmt<'s>(&'s mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
+    fn visit_stmt(&mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
@@ -526,7 +540,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.visit_expr(&cond.cond, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Cmp {
-                    op1: Register::Rax.into(),
+                    op1: Register::Al.into(),
                     op2: Register::Integer(0).into(),
                 });
                 let mut else_l = self.next_l("else");
@@ -541,7 +555,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     self.visit_expr(&elif.cond, tree)?;
                     self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                     self.asm.push_cmd(Command::Cmp {
-                        op1: Register::Rax.into(),
+                        op1: Register::Al.into(),
                         op2: Register::Integer(0).into(),
                     });
                     self.asm.push_cmd(Command::Je(else_l.clone()));
@@ -560,6 +574,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             Stmt::While { cond, body } => {
                 let loop_l = self.next_l("while");
                 let loop_end_l = self.next_l("endwhile");
+                self.enter_loop(&loop_l, &loop_end_l);
                 self.asm.label(&loop_l)?;
                 self.visit_expr(cond, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
@@ -571,6 +586,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.visit_stmt(body, tree)?;
                 self.asm.push_cmd(Command::Jmp(loop_l));
                 self.asm.label(&loop_end_l)?;
+                self.exit_loop();
                 Ok(())
             }
             Stmt::For {
@@ -593,6 +609,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 let l1 = self.next_l("for_body");
+                let l2 = self.next_l("endfor");
+                self.enter_loop(&l1, &l2);
                 self.asm.label(&l1)?;
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Eax.into(),
@@ -607,12 +625,28 @@ impl<'a, W: Write> Compiler<'a, W> {
                     op1: Register::Eax.into(),
                     op2: Memory::new(Register::Rsp).into(),
                 });
-                let l2 = self.next_l("endfor");
                 self.asm.push_cmd(Command::Jg(l2.clone()));
                 self.visit_stmt(body, tree)?;
                 self.asm.push_cmd(Command::Jmp(l1.clone()));
                 self.asm.label(&l2)?;
                 self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
+                self.exit_loop();
+                Ok(())
+            }
+            Stmt::Break => {
+                let end_l = self
+                    .loop_exit_labels
+                    .last()
+                    .expect("break should not be outside of the loop");
+                self.asm.push_cmd(Command::Jmp(end_l.clone()));
+                Ok(())
+            }
+            Stmt::Continue => {
+                let start_l = self
+                    .loop_start_labels
+                    .last()
+                    .expect("continue should be within a loop");
+                self.asm.push_cmd(Command::Jmp(start_l.clone()));
                 Ok(())
             }
             _ => todo!(),
