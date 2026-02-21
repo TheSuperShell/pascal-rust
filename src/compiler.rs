@@ -749,7 +749,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.visit_stmt(&cond.expr, tree)?;
                 let mut elifs = elifs.iter();
                 while let Some(elif) = elifs.next() {
-                    self.asm.push_cmd(Command::Jmp(end_l.clone()));
+                    self.asm.push_cmd(Command::Jmp(else_l.clone()));
                     self.asm.label(&else_l)?;
                     else_l = self.next_l("else");
                     self.visit_expr(&elif.cond, tree)?;
@@ -845,6 +845,20 @@ impl<'a, W: Write> Compiler<'a, W> {
                     .last()
                     .expect("continue should be within a loop");
                 self.asm.push_cmd(Command::Jmp(start_l.clone()));
+                Ok(())
+            }
+            Stmt::Exit(val) => {
+                if let Some(expr) = val {
+                    self.visit_expr(expr, tree)?;
+                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                } else {
+                    self.asm.push_cmd(Command::Xor {
+                        dst: Register::Eax,
+                        src: Register::Eax,
+                    });
+                }
+                self.asm.push_cmd(Command::Leave);
+                self.asm.push_cmd(Command::Ret);
                 Ok(())
             }
             _ => todo!(),
