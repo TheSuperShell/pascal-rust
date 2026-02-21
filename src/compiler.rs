@@ -2,7 +2,7 @@ use crate::{
     error::Error,
     parser::{Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
     semantic_analyzer::SemanticMetadata,
-    symbols::{ConstValue, VarSymbol},
+    symbols::{ConstValue, VarSymbol, VarType},
     tokens::TokenType,
 };
 use std::fmt::Display;
@@ -469,15 +469,22 @@ impl CallStack {
     }
 
     #[inline]
+    pub fn push_global_ar(&mut self) {
+        let ar = ActivationRecord {
+            members: Vec::new(),
+            callables: HashSet::new(),
+        };
+        self.0.push(ar);
+    }
+    #[inline]
     pub fn push_ar(&mut self) {
         let mut ar = ActivationRecord {
             members: Vec::new(),
             callables: HashSet::new(),
         };
-        self.0
-            .last()
-            .map(|ar| &ar.callables)
-            .map(|callables| ar.callables.extend(callables.clone()));
+        self.0.last().map(|ar| &ar.callables).map(|callables| {
+            ar.callables.extend(callables.clone());
+        });
         self.0.push(ar);
     }
     #[inline]
@@ -502,7 +509,7 @@ impl CallStack {
                     .map(|i| (ar.members.len(), i))
             })
             .map(|(s, i)| Register::Rbp.with_offset((s + 1 - i) * 4))
-            .unwrap()
+            .unwrap_or_else(|| panic!("unkown value {name}"))
     }
 
     #[inline]
@@ -572,7 +579,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.loop_start_labels.pop();
     }
 
-    fn visit_var_decl(
+    fn visit_var_decl_local(
         &mut self,
         var: &Decl,
         tree: &'a Tree,
@@ -589,6 +596,24 @@ impl<'a, W: Write> Compiler<'a, W> {
                 };
                 self.call_stack.push_var(var_name);
                 Ok(default_value.map(|v| (var_name, v)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn visit_var_decl_global(&mut self, var: &Decl, tree: &'a Tree) -> Result<(), Error> {
+        match var {
+            Decl::VarDecl {
+                default_value: _,
+                var,
+                type_node: _,
+            } => {
+                let var_name = match tree.expr_pool.get(*var) {
+                    Expr::Var { name } => name.lexem(tree.source_code),
+                    _ => unreachable!(),
+                };
+                self.asm.directive(&format!("{var_name} resd 1"))?;
+                Ok(())
             }
             _ => unreachable!(),
         }
@@ -644,24 +669,42 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
-    fn setup_vars(
+    fn enter_scope(
         &mut self,
-        _scope_name: &str,
-        decls: &[Decl],
+        scope_name: &str,
         params: &[Param],
+        declarations: &[Decl],
+        statements: &StmtRef,
         returns: bool,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
-        let defaults = decls
-            .iter()
-            .filter(|d| matches!(d, Decl::VarDecl { .. }))
-            .map(|decl| self.visit_var_decl(decl, tree))
-            .filter_map(Result::transpose)
-            .collect::<Result<Vec<_>, Error>>()?;
-        defaults.iter().for_each(|(name, _)| {
-            self.call_stack.push_var(name);
-        });
+        self.call_stack.push_ar();
+        let global = scope_name == "main";
+        if global {
+            declarations
+                .iter()
+                .filter(|d| matches!(d, Decl::Callable { .. }))
+                .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
+        } else {
+            self.call_stack.push_callable(scope_name);
+        }
+        self.asm
+            .comment(&format!("{scope_name} function entry point"))?;
+        self.asm.label(scope_name)?;
+        self.asm.comment("block")?;
+        let defaults = {
+            let defaults = declarations
+                .iter()
+                .filter(|d| matches!(d, Decl::VarDecl { .. }))
+                .map(|decl| self.visit_var_decl_local(decl, tree))
+                .filter_map(Result::transpose)
+                .collect::<Result<Vec<_>, Error>>()?;
+            defaults.iter().for_each(|(name, _)| {
+                self.call_stack.push_var(name);
+            });
+            defaults
+        };
         let param_names: Vec<&str> = params
             .iter()
             .map(|param| match tree.expr_pool.get(param.var) {
@@ -698,40 +741,6 @@ impl<'a, W: Write> Compiler<'a, W> {
             });
             Ok::<(), Error>(())
         })?;
-        Ok(())
-    }
-
-    fn enter_scope(
-        &mut self,
-        scope_name: &str,
-        params: &[Param],
-        declarations: &[Decl],
-        statements: &StmtRef,
-        returns: bool,
-        tree: &'a Tree,
-        semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
-        self.call_stack.push_ar();
-        if scope_name == "main" {
-            declarations
-                .iter()
-                .filter(|d| matches!(d, Decl::Callable { .. }))
-                .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
-        } else {
-            self.call_stack.push_callable(scope_name);
-        }
-        self.asm
-            .comment(&format!("{scope_name} function entry point"))?;
-        self.asm.label(scope_name)?;
-        self.asm.comment("block")?;
-        self.setup_vars(
-            scope_name,
-            declarations,
-            params,
-            returns,
-            tree,
-            semantic_metadata,
-        )?;
         self.visit_stmt(statements, tree, semantic_metadata)?;
         if returns {
             self.asm.push_cmd(Command::Mov {
@@ -751,6 +760,45 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
+    fn enter_global_scope(
+        &mut self,
+        declarations: &[Decl],
+        statements: &StmtRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
+        self.asm.directive("section .bss")?;
+        declarations
+            .iter()
+            .filter(|d| matches!(d, Decl::VarDecl { .. }))
+            .try_for_each(|d| self.visit_var_decl_global(d, tree))?;
+        self.asm.newline()?;
+        self.call_stack.push_global_ar();
+        self.asm.directive("section .text")?;
+        self.asm.directive("global main")?;
+        self.asm.directive("extern printf")?;
+        self.asm.newline()?;
+        declarations
+            .iter()
+            .filter(|d| matches!(d, Decl::Callable { .. }))
+            .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
+        self.asm.comment("main entry point")?;
+        self.asm.label("main")?;
+        self.asm.comment("block")?;
+        let local_size = self.call_stack.aligned_size();
+        self.enter_func(local_size)?;
+        self.visit_stmt(statements, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Xor {
+            dst: Register::Eax,
+            src: Register::Eax,
+        });
+        self.asm.push_cmd(Command::Leave);
+        self.asm.push_cmd(Command::Ret);
+        self.asm.comment("end block")?;
+        self.call_stack.pop_ar();
+        Ok(())
+    }
+
     fn visit_stmt(
         &mut self,
         stmt: &StmtRef,
@@ -763,23 +811,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.asm.directive("fmt db \"%d\", 0")?;
                 self.asm.directive("newline db 10, 0")?;
                 self.asm.newline()?;
-                self.asm.directive("section .text")?;
-                self.asm.directive("global main")?;
-                self.asm.directive("extern printf")?;
-                self.asm.newline()?;
                 match tree.stmt_pool.get(*block) {
                     Stmt::Block {
                         declarations,
                         statements,
-                    } => self.enter_scope(
-                        "main",
-                        &[],
-                        declarations,
-                        statements,
-                        false,
-                        tree,
-                        semantic_metadata,
-                    ),
+                    } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
                     _ => unreachable!(),
                 }
             }
@@ -796,8 +832,12 @@ impl<'a, W: Write> Compiler<'a, W> {
                 };
                 self.visit_expr(right, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                let source_op = match semantic_metadata.var_types.get(left).unwrap() {
+                    VarType::Local => self.call_stack.lookup_var(var_name).into(),
+                    VarType::Global => GlobalMemory(var_name).into(),
+                };
                 self.asm.push_cmd(Command::Mov {
-                    dst: self.call_stack.lookup_var(var_name).into(),
+                    dst: source_op,
                     src: Register::Eax.into(),
                 });
                 Ok(())
@@ -865,12 +905,19 @@ impl<'a, W: Write> Compiler<'a, W> {
                 end,
                 body,
             } => {
-                let var_mem = self.call_stack.lookup_var(var.lexem(tree.source_code));
+                let var_name = match tree.expr_pool.get(*var) {
+                    Expr::Var { name } => name.lexem(tree.source_code),
+                    _ => unreachable!(),
+                };
+                let var_mem: Operand = match semantic_metadata.var_types.get(var).unwrap() {
+                    VarType::Local => self.call_stack.lookup_var(var_name).into(),
+                    VarType::Global => GlobalMemory(var_name).into(),
+                };
                 self.visit_expr(init, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Dec(Register::Eax));
                 self.asm.push_cmd(Command::Mov {
-                    dst: var_mem.clone().into(),
+                    dst: var_mem.clone(),
                     src: Register::Eax.into(),
                 });
                 self.visit_expr(end, tree, semantic_metadata)?;
@@ -1019,9 +1066,13 @@ impl<'a, W: Write> Compiler<'a, W> {
                     name,
                     type_symbol: _,
                 } => {
+                    let source_op = match semantic_metadata.var_types.get(expr).unwrap() {
+                        VarType::Local => self.call_stack.lookup_var(name).into(),
+                        VarType::Global => GlobalMemory(name).into(),
+                    };
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Eax.into(),
-                        src: self.call_stack.lookup_var(name).into(),
+                        src: source_op,
                     });
                 }
                 VarSymbol::Const {

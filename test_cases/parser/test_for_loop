@@ -1,7 +1,7 @@
 Program n
 
 Begin
-  For(i)
+  For(Var(i))
     LitInt(0)
     To
     LitInt(100)

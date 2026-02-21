@@ -44,7 +44,7 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     For {
-        var: Token,
+        var: ExprRef,
         init: ExprRef,
         end: ExprRef,
         body: StmtRef,
@@ -646,7 +646,7 @@ impl<'a> Parser<'a> {
     /// For id Assign expr To expr Do statement
     fn for_statement(&mut self) -> Result<StmtRef, Error> {
         let start_span = self.eat(TokenType::For)?.span();
-        let var = self.id_str()?;
+        let var = self.id()?;
         self.eat(TokenType::Assign)?;
         let init_state = self.expr()?;
         self.eat(TokenType::To)?;
@@ -1194,9 +1194,9 @@ impl<'a> Tree<'a> {
                 let init_str = self.visit_expr(*init, level + 1);
                 let end_str = self.visit_expr(*end, level + 1);
                 let body_str = self.visit_stmt(*body, level + 1);
+                let var_str = self.visit_expr(*var, 0);
                 format!(
-                    "{indent}For({})\n{init_str}\n{indent}  To\n{end_str}\n{indent}Do\n{body_str}",
-                    var.lexem(self.source_code)
+                    "{indent}For({var_str})\n{init_str}\n{indent}  To\n{end_str}\n{indent}Do\n{body_str}"
                 )
             }
             Stmt::If {

@@ -201,6 +201,12 @@ impl VarSymbol {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum VarType {
+    Local,
+    Global,
+}
+
 #[derive(Debug, Clone)]
 pub struct RangeSymbol {
     lower_index: i32,
@@ -420,19 +426,36 @@ impl SymbolTable {
         debug!(target: "pascal::semantic", "type {} was not found", name);
         None
     }
-    pub fn lookup_var(&self, name: &str, current_scope_only: bool) -> Option<VarSymbolRef> {
+    pub fn lookup_var(
+        &self,
+        name: &str,
+        current_scope_only: bool,
+    ) -> Option<(VarSymbolRef, VarType)> {
+        let var_type = match self.scope_level {
+            1..2 => VarType::Global,
+            _ => VarType::Local,
+        };
+        self.lookup_var_internal(name, current_scope_only, var_type)
+    }
+
+    fn lookup_var_internal(
+        &self,
+        name: &str,
+        current_scope_only: bool,
+        var_type: VarType,
+    ) -> Option<(VarSymbolRef, VarType)> {
         let name = &name.to_lowercase();
         debug!(target: "pascal::semantic", "Lookup var (scope name: {}): {}", self.scope_name, name);
         if self.var_symbols.contains_key(name) {
-            debug!(target: "pascal::semantic", "var {} found in {} scope", name, self.scope_name);
-            return Some(self.var_symbols[name]);
+            debug!(target: "pascal::semantic", "var {} found in {} scope; var type {:?}", name, self.scope_name, var_type);
+            return Some((self.var_symbols[name], var_type));
         };
         if current_scope_only {
             debug!(target: "pascal::semantic", "var {} was not found", name);
             return None;
         }
         if let Some(table) = &self.enclosing_scope {
-            return table.lookup_var(name, current_scope_only);
+            return table.lookup_var_internal(name, current_scope_only, VarType::Global);
         };
         debug!(target: "pascal::semantic", "var {} was not found", name);
         None

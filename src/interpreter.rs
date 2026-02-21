@@ -449,15 +449,17 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 end,
                 body,
             } => {
+                let var_symbol = semantic_metadata
+                    .vars
+                    .get(*semantic_metadata.var_symbols.get(var).unwrap());
+                let name = match var_symbol {
+                    VarSymbol::Var { name, .. } => name,
+                    _ => unreachable!(),
+                };
                 let init_val = self.visit_expr(*init, tree, semantic_metadata)?;
                 let end_val = self.visit_expr(*end, tree, semantic_metadata)?;
                 let type_symbol = semantic_metadata.get_expr_type(init).unwrap();
-                self.write(
-                    &LValue::Ref {
-                        name: var.lexem(tree.source_code),
-                    },
-                    init_val.clone(),
-                );
+                self.write(&LValue::Ref { name }, init_val.clone());
                 let mut i = type_symbol.ordinal_rank(&init_val, semantic_metadata);
                 while i != type_symbol.ordinal_rank(&end_val, semantic_metadata) {
                     let cr = self.visit_stmt(*body, tree, semantic_metadata)?;
@@ -471,12 +473,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     }
                     i += 1;
                     let result = type_symbol.oridnal_value(i);
-                    self.write(
-                        &LValue::Ref {
-                            name: var.lexem(tree.source_code),
-                        },
-                        result,
-                    );
+                    self.write(&LValue::Ref { name }, result);
                 }
                 Ok(ControlFlow::Continue(()))
             }

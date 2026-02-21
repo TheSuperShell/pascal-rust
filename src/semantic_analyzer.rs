@@ -5,7 +5,7 @@ use crate::{
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
         CallableSymbol, CallableSymbolRef, CallableType, ConstValue, ParamInputMode, ParamMode,
-        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
+        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef, VarType,
     },
     tokens::{Token, TokenType},
     utils::NodePool,
@@ -18,6 +18,7 @@ pub struct SemanticMetadata {
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
     pub callable_symbols: HashMap<ExprRef, CallableSymbolRef>,
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
+    pub var_types: HashMap<ExprRef, VarType>,
 
     pub types: NodePool<TypeSymbolRef, TypeSymbol>,
     pub vars: NodePool<VarSymbolRef, VarSymbol>,
@@ -80,6 +81,7 @@ impl SemanticAnalyzer {
             expr_type_map: HashMap::new(),
             callable_symbols: HashMap::new(),
             var_symbols: HashMap::new(),
+            var_types: HashMap::new(),
         };
         debug!(target: "pascal::semantic", "{}", current_scope.to_string(&semantic_metadata));
         let current_scope = SymbolTable::new(1, "global", Some(Box::new(current_scope)));
@@ -245,30 +247,35 @@ impl SemanticAnalyzer {
             } => {
                 let init_state_type_ref = self.visit_expr(*init, tree)?;
                 let end_state_type_ref = self.visit_expr(*end, tree)?;
+                let var_type_ref = self.visit_expr(*var, tree)?;
+                let var_type = self.semantic_metadata.types.get(var_type_ref);
                 let init_state_type = self.semantic_metadata.types.get(init_state_type_ref);
                 let end_state_type = self.semantic_metadata.types.get(end_state_type_ref);
-                let var_node = self.semantic_metadata.vars.get(
-                    self.current_scope
-                        .lookup_var(var.lexem(tree.source_code), false)
-                        .ok_or(Error::SemanticError {
-                            msg: format!("var `{}` is unkown", var.lexem(tree.source_code)),
-                            pos: tree.node_pos(NodeRef::StmtRef(node)),
-                            error_code: ErrorCode::UnkownVariable,
-                        })?,
-                );
-                let var_type = match var_node {
+                let var_symbol = self
+                    .semantic_metadata
+                    .vars
+                    .get(*self.semantic_metadata.var_symbols.get(var).unwrap());
+                match var_symbol {
                     VarSymbol::Var {
-                        name: _,
-                        type_symbol,
-                    } => self.semantic_metadata.types.get(*type_symbol),
+                        name,
+                        type_symbol: _,
+                    } => {
+                        if self.current_scope.lookup_var(name, false).is_none() {
+                            return Err(Error::SemanticError {
+                                msg: format!("unkown variable {name}"),
+                                pos,
+                                error_code: ErrorCode::UnkownVariable,
+                            });
+                        }
+                    }
                     _ => {
                         return Err(Error::SemanticError {
-                            msg: format!("expected var, got {:?}", var_node),
-                            pos: tree.node_pos(NodeRef::StmtRef(node)),
+                            msg: format!("expected var, got {:?}", var_symbol),
+                            pos,
                             error_code: ErrorCode::ExpectedVar,
                         });
                     }
-                };
+                }
                 if !TypeSymbol::eq(
                     &self.semantic_metadata.types,
                     &init_state_type,
@@ -309,7 +316,7 @@ impl SemanticAnalyzer {
             Expr::LiteralReal(_) => Ok(TypeSymbol::Real),
             Expr::LiteralString(_) => Ok(TypeSymbol::String),
             Expr::Var { name } => {
-                let var_symbol_ref = self
+                let (var_symbol_ref, var_kind) = self
                     .current_scope
                     .lookup_var(name.lexem(tree.source_code), false)
                     .ok_or(Error::SemanticError {
@@ -317,6 +324,7 @@ impl SemanticAnalyzer {
                         pos,
                         error_code: ErrorCode::UnkownVariable,
                     })?;
+                self.semantic_metadata.var_types.insert(node, var_kind);
                 let var_symbol = self.semantic_metadata.vars.get(var_symbol_ref);
                 self.semantic_metadata
                     .var_symbols
