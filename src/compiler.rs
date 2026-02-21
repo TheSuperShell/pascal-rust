@@ -246,6 +246,10 @@ enum Command<'a> {
     Jmp(String),
     Sete(Register<'a>),
     Setne(Register<'a>),
+    Setg(Register<'a>),
+    Setge(Register<'a>),
+    Setl(Register<'a>),
+    Setle(Register<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -394,6 +398,10 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Jmp(l) => writeln!(self.output, "jmp {l}"),
                 Command::Sete(r) => writeln!(self.output, "sete {}", r),
                 Command::Setne(r) => writeln!(self.output, "setne {}", r),
+                Command::Setg(r) => writeln!(self.output, "setg {}", r),
+                Command::Setge(r) => writeln!(self.output, "setge {}", r),
+                Command::Setl(r) => writeln!(self.output, "setl {}", r),
+                Command::Setle(r) => writeln!(self.output, "setle {}", r),
             })
     }
 
@@ -1016,7 +1024,12 @@ impl<'a, W: Write> Compiler<'a, W> {
                             src: Register::Bl,
                         });
                     }
-                    TokenType::Equal | TokenType::NotEqual => self.visit_comparison(&op)?,
+                    TokenType::Equal
+                    | TokenType::NotEqual
+                    | TokenType::GreaterEqual
+                    | TokenType::GreaterThen
+                    | TokenType::LessThen
+                    | TokenType::LessEqual => self.visit_comparison(&op)?,
                     _ => unreachable!(),
                 }
             }
@@ -1037,6 +1050,18 @@ impl<'a, W: Write> Compiler<'a, W> {
             }
             TokenType::NotEqual => {
                 self.asm.push_cmd(Command::Setne(Register::Al));
+            }
+            TokenType::GreaterThen => {
+                self.asm.push_cmd(Command::Setg(Register::Al));
+            }
+            TokenType::GreaterEqual => {
+                self.asm.push_cmd(Command::Setge(Register::Al));
+            }
+            TokenType::LessThen => {
+                self.asm.push_cmd(Command::Setl(Register::Al));
+            }
+            TokenType::LessEqual => {
+                self.asm.push_cmd(Command::Setle(Register::Al));
             }
             _ => unreachable!(),
         };
