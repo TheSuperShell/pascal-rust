@@ -1,10 +1,10 @@
 use crate::{
     error::Error,
-    parser::{Decl, Expr, ExprRef, Stmt, StmtRef, Tree},
+    parser::{Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
     tokens::TokenType,
 };
-use std::io::Write;
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
+use std::{collections::HashSet, io::Write};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -23,6 +23,8 @@ enum Register<'a> {
     Rbx,
     Rcx,
     Rdx,
+    R8,
+    R9,
 
     Rbp,
     Rsp,
@@ -30,6 +32,9 @@ enum Register<'a> {
     Eax,
     Ebx,
     Edx,
+    Ecx,
+    R8d,
+    R9d,
 
     Al,
     Bl,
@@ -53,6 +58,11 @@ impl<'a> Display for Register<'a> {
             Register::Eax => write!(f, "eax"),
             Register::Ebx => write!(f, "ebx"),
             Register::Edx => write!(f, "edx"),
+            Register::Ecx => write!(f, "ecx"),
+            Register::R8d => write!(f, "r8d"),
+            Register::R9d => write!(f, "r9d"),
+            Register::R8 => write!(f, "r8"),
+            Register::R9 => write!(f, "r9"),
             Register::Al => write!(f, "al"),
             Register::Bl => write!(f, "bl"),
             Register::Xmm0 => write!(f, "xmm0"),
@@ -72,10 +82,31 @@ impl PartialEq for Register<'_> {
     }
 }
 
+impl<'a> Register<'a> {
+    pub fn from_param_index64(i: usize) -> Self {
+        match i {
+            0 => Register::Rcx,
+            1 => Register::Rdx,
+            2 => Register::R8,
+            4 => Register::R9,
+            _ => unimplemented!("more input variables are not implemented yet"),
+        }
+    }
+    pub fn from_param_index32(i: usize) -> Self {
+        match i {
+            0 => Register::Ecx,
+            1 => Register::Edx,
+            2 => Register::R8d,
+            4 => Register::R9d,
+            _ => unimplemented!("more input variables are not implemented yet"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Memory<'a> {
     base: Register<'a>,
-    offset: i32,
+    offset: usize,
 }
 
 impl<'a> Memory<'a> {
@@ -83,7 +114,7 @@ impl<'a> Memory<'a> {
         Self { base, offset: 0 }
     }
 
-    pub fn with_offset(mut self, offset: i32) -> Self {
+    pub fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
     }
@@ -126,7 +157,7 @@ impl<'a> Into<Operand<'a>> for Memory<'a> {
 }
 
 impl<'a> Register<'a> {
-    pub fn with_offset(self, offset: i32) -> Memory<'a> {
+    pub fn with_offset(self, offset: usize) -> Memory<'a> {
         Memory::new(self).with_offset(offset)
     }
 }
@@ -157,7 +188,7 @@ enum Command<'a> {
     },
     Movzx {
         dst: Register<'a>,
-        src: Register<'a>,
+        src: Operand<'a>,
     },
     Add {
         dst: Register<'a>,
@@ -196,6 +227,7 @@ enum Command<'a> {
         name: &'a str,
     },
     Ret,
+    Leave,
 
     Cmp {
         op1: Operand<'a>,
@@ -332,9 +364,8 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Neg(dst) => {
                     writeln!(self.output, "neg {}", dst)
                 }
-                Command::Ret => {
-                    writeln!(self.output, "ret")
-                }
+                Command::Ret => writeln!(self.output, "ret"),
+                Command::Leave => writeln!(self.output, "leave"),
                 Command::Call { name } => {
                     writeln!(self.output, "call {}", name)
                 }
@@ -396,9 +427,73 @@ impl<'a, W: Write> Assambler<'a, W> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ActivationRecord {
+    members: Vec<String>,
+    callables: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CallStack(Vec<ActivationRecord>);
+
+impl CallStack {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push_ar(&mut self) {
+        let mut ar = ActivationRecord {
+            members: Vec::new(),
+            callables: HashSet::new(),
+        };
+        self.0
+            .last()
+            .map(|ar| &ar.callables)
+            .map(|callables| ar.callables.extend(callables.clone()));
+        self.0.push(ar);
+    }
+    pub fn pop_ar(&mut self) -> Option<ActivationRecord> {
+        self.0.pop()
+    }
+
+    pub fn push_var(&mut self, name: &str) {
+        let last_ar = self.0.last_mut().unwrap();
+        last_ar.members.push(name.into());
+    }
+
+    pub fn lookup_var<'a>(&self, name: &'a str) -> Memory<'a> {
+        self.0
+            .last()
+            .and_then(|ar| {
+                ar.members
+                    .iter()
+                    .position(|v| v == name)
+                    .map(|i| (ar.members.len(), i))
+            })
+            .map(|(s, i)| Register::Rbp.with_offset((s + 1 - i) * 4))
+            .unwrap()
+    }
+
+    pub fn aligned_size(&self) -> usize {
+        ((self.0.last().unwrap().members.len() * 4 + 15) / 16) * 16
+    }
+
+    pub fn contains_callable(&self, name: &str) -> bool {
+        self.0
+            .last()
+            .map(|ar| ar.callables.contains(name))
+            .unwrap_or(false)
+    }
+
+    pub fn push_callable(&mut self, name: &str) {
+        self.0.last_mut().unwrap().callables.insert(name.into());
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Compiler<'a, W: Write> {
     asm: Assambler<'a, W>,
-    locals: HashMap<String, i32>,
+    call_stack: CallStack,
     current_l_num: u64,
     loop_exit_labels: Vec<String>,
     loop_start_labels: Vec<String>,
@@ -408,7 +503,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     pub fn new(output: W) -> Result<Self, Error> {
         Ok(Compiler {
             asm: Assambler::new(output, true),
-            locals: HashMap::new(),
+            call_stack: CallStack::new(),
             current_l_num: 0,
             loop_exit_labels: Vec::new(),
             loop_start_labels: Vec::new(),
@@ -430,21 +525,17 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.loop_start_labels.pop();
     }
 
-    fn offset(&self, ind: i32) -> i32 {
-        (self.locals.len() as i32 + 1 - ind) * 4
-    }
-
-    fn var_offset(&self, name: &str) -> Option<i32> {
-        self.locals.get(name).map(|ind| self.offset(*ind))
-    }
-
-    pub fn compile(mut self, tree: &Tree) -> Result<W, Error> {
+    pub fn compile(mut self, tree: &'a Tree) -> Result<W, Error> {
         self.visit_stmt(&tree.program, tree)?;
         Ok(self.asm.output()?)
     }
 
-    fn visit_decl(&mut self, decl: &Decl, tree: &Tree) -> Result<Option<ExprRef>, Error> {
-        match decl {
+    fn visit_var_decl(
+        &mut self,
+        var: &Decl,
+        tree: &'a Tree,
+    ) -> Result<Option<(&'a str, ExprRef)>, Error> {
+        match var {
             Decl::VarDecl {
                 default_value,
                 var,
@@ -454,77 +545,173 @@ impl<'a, W: Write> Compiler<'a, W> {
                     Expr::Var { name } => name.lexem(tree.source_code),
                     _ => unreachable!(),
                 };
-                let offset = self.locals.len() as i32 + 1;
-                self.locals.insert(var_name.to_string(), offset);
-                Ok(*default_value)
+                self.call_stack.push_var(var_name);
+                Ok(default_value.map(|v| (var_name, v)))
             }
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
-    fn assign_default(&mut self, ind: i32, value: &ExprRef, tree: &Tree) -> Result<(), Error> {
-        let offset = self.offset(ind);
-        self.visit_expr(value, tree)?;
-        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+    fn visit_callable_decl(&mut self, callable: &Decl, tree: &'a Tree) -> Result<(), Error> {
+        match callable {
+            Decl::Callable {
+                params,
+                name,
+                return_type,
+                block,
+            } => {
+                let func_name = name.lexem(tree.source_code);
+                match tree.stmt_pool.get(*block) {
+                    Stmt::Block {
+                        declarations,
+                        statements,
+                    } => {
+                        self.call_stack.push_callable(func_name);
+                        self.enter_scope(
+                            func_name,
+                            params,
+                            declarations,
+                            statements,
+                            return_type.is_some(),
+                            tree,
+                        )
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn enter_func(&mut self, aligned_size: usize) -> Result<(), Error> {
+        self.asm.push_cmd(Command::Push(Register::Rbp.into()));
         self.asm.push_cmd(Command::Mov {
-            dst: Register::Rbp.with_offset(offset).into(),
-            src: Register::Eax.into(),
+            dst: Register::Rbp.into(),
+            src: Register::Rsp.into(),
+        });
+        self.asm.push_cmd(Command::Sub {
+            dst: Register::Rsp,
+            src: Register::Integer(32 + aligned_size as i32),
         });
         Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &StmtRef, tree: &Tree) -> Result<(), Error> {
+    fn setup_vars(
+        &mut self,
+        _scope_name: &str,
+        decls: &[Decl],
+        params: &[Param],
+        returns: bool,
+        tree: &'a Tree,
+    ) -> Result<(), Error> {
+        let defaults = decls
+            .iter()
+            .filter(|d| matches!(d, Decl::VarDecl { .. }))
+            .map(|decl| self.visit_var_decl(decl, tree))
+            .filter_map(Result::transpose)
+            .collect::<Result<Vec<_>, Error>>()?;
+        defaults.iter().for_each(|(name, _)| {
+            self.call_stack.push_var(name);
+        });
+        let param_names: Vec<&str> = params
+            .iter()
+            .map(|param| match tree.expr_pool.get(param.var) {
+                Expr::Var { name } => name.lexem(tree.source_code),
+                _ => unreachable!(),
+            })
+            .collect();
+        param_names.iter().for_each(|param_name| {
+            self.call_stack.push_var(*param_name);
+        });
+        if returns {
+            self.call_stack.push_var("result");
+        }
+        let local_size = self.call_stack.aligned_size();
+        self.enter_func(local_size)?;
+        param_names
+            .iter()
+            .enumerate()
+            .try_for_each(|(i, param_name)| {
+                let reg = Register::from_param_index32(i);
+                let mem = self.call_stack.lookup_var(*param_name);
+                self.asm.push_cmd(Command::Mov {
+                    dst: mem.into(),
+                    src: reg.into(),
+                });
+                Ok::<(), Error>(())
+            })?;
+        defaults.into_iter().try_for_each(|(var_name, v)| {
+            self.visit_expr(&v, tree)?;
+            self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+            self.asm.push_cmd(Command::Mov {
+                dst: self.call_stack.lookup_var(var_name).into(),
+                src: Register::Eax.into(),
+            });
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    fn enter_scope(
+        &mut self,
+        scope_name: &str,
+        params: &[Param],
+        declarations: &[Decl],
+        statements: &StmtRef,
+        returns: bool,
+        tree: &'a Tree,
+    ) -> Result<(), Error> {
+        self.call_stack.push_ar();
+        if scope_name == "main" {
+            declarations
+                .iter()
+                .filter(|d| matches!(d, Decl::Callable { .. }))
+                .try_for_each(|c| self.visit_callable_decl(c, tree))?;
+        } else {
+            self.call_stack.push_callable(scope_name);
+        }
+        self.asm
+            .comment(&format!("{scope_name} function entry point"))?;
+        self.asm.label(scope_name)?;
+        self.asm.comment("block")?;
+        self.setup_vars(scope_name, declarations, params, returns, tree)?;
+        self.visit_stmt(statements, tree)?;
+        if returns {
+            self.asm.push_cmd(Command::Mov {
+                dst: Register::Eax.into(),
+                src: self.call_stack.lookup_var("result").into(),
+            });
+        } else {
+            self.asm.push_cmd(Command::Xor {
+                dst: Register::Eax,
+                src: Register::Eax,
+            });
+        }
+        self.asm.push_cmd(Command::Leave);
+        self.asm.push_cmd(Command::Ret);
+        self.asm.comment("end block")?;
+        self.call_stack.pop_ar();
+        Ok(())
+    }
+
+    fn visit_stmt(&mut self, stmt: &StmtRef, tree: &'a Tree) -> Result<(), Error> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
-                self.asm.directive("fmt db \"> %d\", 10, 0")?;
+                self.asm.directive("fmt db \"%d\", 0")?;
+                self.asm.directive("newline db 10, 0")?;
                 self.asm.newline()?;
                 self.asm.directive("section .text")?;
                 self.asm.directive("global main")?;
                 self.asm.directive("extern printf")?;
                 self.asm.newline()?;
-                self.asm.comment("main function entry point")?;
-                self.asm.label("main")?;
-                self.visit_stmt(block, tree)?;
-                self.asm.push_cmd(Command::Xor {
-                    dst: Register::Eax,
-                    src: Register::Eax,
-                });
-                self.asm.push_cmd(Command::Ret);
-                Ok(())
-            }
-            Stmt::Block {
-                declarations,
-                statements,
-            } => {
-                self.asm.comment("block")?;
-                self.asm.push_cmd(Command::Push(Register::Rbp.into()));
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbp.into(),
-                    src: Register::Rsp.into(),
-                });
-                let defaults = declarations
-                    .iter()
-                    .map(|decl| self.visit_decl(decl, tree))
-                    .collect::<Result<Vec<_>, Error>>()?;
-                let local_size = (self.locals.len() as i32) * 4;
-                let aligned_local_size = ((local_size + 15) / 16) * 16;
-                self.asm.push_cmd(Command::Sub {
-                    dst: Register::Rsp,
-                    src: Register::Integer(32 + aligned_local_size),
-                });
-                defaults
-                    .into_iter()
-                    .enumerate()
-                    .try_for_each(|(i, v)| match v {
-                        Some(value) => self.assign_default(i as i32 + 1, &value, tree),
-                        None => Ok(()),
-                    })?;
-                self.visit_stmt(statements, tree)?;
-
-                self.asm.directive("leave")?;
-                self.asm.comment("end block")?;
-                Ok(())
+                match tree.stmt_pool.get(*block) {
+                    Stmt::Block {
+                        declarations,
+                        statements,
+                    } => self.enter_scope("main", &[], declarations, statements, false, tree),
+                    _ => unreachable!(),
+                }
             }
             Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
                 self.visit_stmt(v, tree)?;
@@ -537,11 +724,10 @@ impl<'a, W: Write> Compiler<'a, W> {
                     Expr::Var { name } => name.lexem(tree.source_code),
                     _ => unreachable!(),
                 };
-                let offset = self.var_offset(var_name).expect("expected value to exist");
                 self.visit_expr(right, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbp.with_offset(offset).into(),
+                    dst: self.call_stack.lookup_var(var_name).into(),
                     src: Register::Eax.into(),
                 });
                 Ok(())
@@ -609,14 +795,12 @@ impl<'a, W: Write> Compiler<'a, W> {
                 end,
                 body,
             } => {
-                let var_offset = self
-                    .var_offset(var.lexem(tree.source_code))
-                    .expect("var should exist");
+                let var_mem = self.call_stack.lookup_var(var.lexem(tree.source_code));
                 self.visit_expr(init, tree)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Dec(Register::Eax));
                 self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbp.with_offset(var_offset).into(),
+                    dst: var_mem.clone().into(),
                     src: Register::Eax.into(),
                 });
                 self.visit_expr(end, tree)?;
@@ -628,11 +812,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.asm.label(&l1)?;
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Eax.into(),
-                    src: Register::Rbp.with_offset(var_offset).into(),
+                    src: var_mem.clone().into(),
                 });
                 self.asm.push_cmd(Command::Inc(Register::Eax.into()));
                 self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbp.with_offset(var_offset).into(),
+                    dst: var_mem.into(),
                     src: Register::Eax.into(),
                 });
                 self.asm.push_cmd(Command::Cmp {
@@ -667,11 +851,25 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_call(&mut self, call: &ExprRef, tree: &Tree) -> Result<(), Error> {
+    fn visit_call(&mut self, call: &ExprRef, tree: &'a Tree) -> Result<(), Error> {
         match tree.expr_pool.get(*call) {
             Expr::Call { name, args } => {
-                if name.lexem(tree.source_code).to_lowercase() != "writeln" {
-                    unimplemented!("Only writeln is supported for now")
+                let func_name = name.lexem(tree.source_code);
+                if self.call_stack.contains_callable(func_name) {
+                    args.iter().try_for_each(|arg| {
+                        self.visit_expr(arg, tree)?;
+                        Ok::<(), Error>(())
+                    })?;
+                    (0..args.len()).into_iter().try_for_each(|i| {
+                        let reg = Register::from_param_index64(i);
+                        self.asm.push_cmd(Command::Pop(reg.into()));
+                        Ok::<(), Error>(())
+                    })?;
+                    self.asm.push_cmd(Command::Call { name: func_name });
+                    return Ok(());
+                }
+                if func_name != "writeln" {
+                    unimplemented!("Only writeln is supported as a builtin funcion for now")
                 }
                 self.asm.comment("call writeln")?;
                 for arg in args {
@@ -695,42 +893,50 @@ impl<'a, W: Write> Compiler<'a, W> {
                         src: Register::Integer(32),
                     });
                 }
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rcx.into(),
+                    src: Register::Variable("newline").into(),
+                });
+                self.asm.push_cmd(Command::Sub {
+                    dst: Register::Rsp,
+                    src: Register::Integer(32),
+                });
+                self.asm.push_cmd(Command::Call { name: "printf" });
+                self.asm.push_cmd(Command::Add {
+                    dst: Register::Rsp,
+                    src: Register::Integer(32),
+                });
                 Ok(())
             }
             _ => unreachable!(),
         }
     }
 
-    fn visit_expr(&mut self, expr: &ExprRef, tree: &Tree) -> Result<(), Error> {
+    fn visit_expr(&mut self, expr: &ExprRef, tree: &'a Tree) -> Result<(), Error> {
         match tree.expr_pool.get(*expr) {
+            Expr::Call { .. } => {
+                self.visit_call(expr, tree)?;
+            }
             Expr::Var { name } => {
                 let var_name = name.lexem(tree.source_code);
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Eax.into(),
-                    src: Register::Rbp
-                        .with_offset(
-                            self.var_offset(var_name)
-                                .expect("expected value to exist")
-                                .into(),
-                        )
-                        .into(),
+                    src: self.call_stack.lookup_var(var_name).into(),
                 });
-                self.asm.push_cmd(Command::Push(Register::Rax.into()));
-                Ok(())
             }
-            Expr::LiteralInteger(i) => {
-                self.asm
-                    .push_cmd(Command::Push(Register::Integer(*i).into()));
-                Ok(())
-            }
+            Expr::LiteralInteger(i) => self.asm.push_cmd(Command::Mov {
+                dst: Register::Rax.into(),
+                src: Register::Integer(*i).into(),
+            }),
             Expr::LiteralBool(b) => {
                 let val = match b {
                     true => 1,
                     false => 0,
                 };
-                self.asm
-                    .push_cmd(Command::Push(Register::Integer(val).into()));
-                Ok(())
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rax.into(),
+                    src: Register::Integer(val).into(),
+                })
             }
             Expr::UnaryOp { op, expr } => {
                 self.visit_expr(expr, tree)?;
@@ -747,13 +953,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                         });
                         self.asm.push_cmd(Command::Movzx {
                             dst: Register::Rax,
-                            src: Register::Al,
+                            src: Register::Al.into(),
                         });
                     }
                     _ => todo!(),
                 }
-                self.asm.push_cmd(Command::Push(Register::Rax.into()));
-                Ok(())
             }
             Expr::BinOp { op, left, right } => {
                 self.visit_expr(left, tree)?;
@@ -801,11 +1005,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                     TokenType::Equal | TokenType::NotEqual => self.visit_comparison(&op)?,
                     _ => unreachable!(),
                 }
-                self.asm.push_cmd(Command::Push(Register::Rax.into()));
-                Ok(())
             }
             _ => todo!(),
-        }
+        };
+        self.asm.push_cmd(Command::Push(Register::Rax.into()));
+        Ok(())
     }
 
     fn visit_comparison(&mut self, cmp_token: &TokenType) -> Result<(), Error> {
