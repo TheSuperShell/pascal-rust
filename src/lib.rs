@@ -37,8 +37,8 @@ pub fn compile_into_file<P: AsRef<Path> + ToString>(path: P, target: P) -> Resul
     let tree = parser.parse()?;
     // println!("{tree}");
     let semantic_analyzer = SemanticAnalyzer::new();
-    let _ = semantic_analyzer.analyze(&tree)?;
+    let semantic_metadata = semantic_analyzer.analyze(&tree)?;
     let target = std::fs::File::create(target)?;
-    let _ = Compiler::new(target)?.compile(&tree)?;
+    let _ = Compiler::new(target)?.compile(&tree, &semantic_metadata)?;
     Ok(())
 }

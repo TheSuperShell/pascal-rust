@@ -1,6 +1,8 @@
 use crate::{
     error::Error,
     parser::{Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
+    semantic_analyzer::SemanticMetadata,
+    symbols::{ConstValue, VarSymbol},
     tokens::TokenType,
 };
 use std::fmt::Display;
@@ -104,12 +106,21 @@ impl<'a> Register<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Memory<'a> {
+struct GlobalMemory<'a>(&'a str);
+
+impl<'a> Display for GlobalMemory<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "dword [rel {}]", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StackMemory<'a> {
     base: Register<'a>,
     offset: usize,
 }
 
-impl<'a> Memory<'a> {
+impl<'a> StackMemory<'a> {
     pub fn new(base: Register<'a>) -> Self {
         Self { base, offset: 0 }
     }
@@ -120,7 +131,7 @@ impl<'a> Memory<'a> {
     }
 }
 
-impl Display for Memory<'_> {
+impl Display for StackMemory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.offset {
             0 => write!(f, "dword [{}]", self.base),
@@ -132,14 +143,16 @@ impl Display for Memory<'_> {
 #[derive(Debug, Clone, PartialEq)]
 enum Operand<'a> {
     Register(Register<'a>),
-    Memory(Memory<'a>),
+    StackMemory(StackMemory<'a>),
+    GlobalMemory(GlobalMemory<'a>),
 }
 
 impl Display for Operand<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Operand::Register(r) => write!(f, "{}", r),
-            Operand::Memory(mem) => write!(f, "{}", mem),
+            Operand::StackMemory(mem) => write!(f, "{}", mem),
+            Operand::GlobalMemory(var) => write!(f, "{}", var),
         }
     }
 }
@@ -150,15 +163,21 @@ impl<'a> Into<Operand<'a>> for Register<'a> {
     }
 }
 
-impl<'a> Into<Operand<'a>> for Memory<'a> {
+impl<'a> Into<Operand<'a>> for StackMemory<'a> {
     fn into(self) -> Operand<'a> {
-        Operand::Memory(self)
+        Operand::StackMemory(self)
+    }
+}
+
+impl<'a> Into<Operand<'a>> for GlobalMemory<'a> {
+    fn into(self) -> Operand<'a> {
+        Operand::GlobalMemory(self)
     }
 }
 
 impl<'a> Register<'a> {
-    pub fn with_offset(self, offset: usize) -> Memory<'a> {
-        Memory::new(self).with_offset(offset)
+    pub fn with_offset(self, offset: usize) -> StackMemory<'a> {
+        StackMemory::new(self).with_offset(offset)
     }
 }
 
@@ -219,7 +238,7 @@ enum Command<'a> {
     Not(Register<'a>),
     Lea {
         dst: Register<'a>,
-        src: Memory<'a>,
+        src: StackMemory<'a>,
     },
     Inc(Register<'a>),
     Dec(Register<'a>),
@@ -449,6 +468,7 @@ impl CallStack {
         Self(Vec::new())
     }
 
+    #[inline]
     pub fn push_ar(&mut self) {
         let mut ar = ActivationRecord {
             members: Vec::new(),
@@ -460,16 +480,19 @@ impl CallStack {
             .map(|callables| ar.callables.extend(callables.clone()));
         self.0.push(ar);
     }
+    #[inline]
     pub fn pop_ar(&mut self) -> Option<ActivationRecord> {
         self.0.pop()
     }
 
+    #[inline]
     pub fn push_var(&mut self, name: &str) {
         let last_ar = self.0.last_mut().unwrap();
         last_ar.members.push(name.into());
     }
 
-    pub fn lookup_var<'a>(&self, name: &'a str) -> Memory<'a> {
+    #[inline]
+    pub fn lookup_var<'a>(&self, name: &'a str) -> StackMemory<'a> {
         self.0
             .last()
             .and_then(|ar| {
@@ -482,10 +505,12 @@ impl CallStack {
             .unwrap()
     }
 
+    #[inline]
     pub fn aligned_size(&self) -> usize {
         ((self.0.last().unwrap().members.len() * 4 + 15) / 16) * 16
     }
 
+    #[inline]
     pub fn contains_callable(&self, name: &str) -> bool {
         self.0
             .last()
@@ -493,6 +518,7 @@ impl CallStack {
             .unwrap_or(false)
     }
 
+    #[inline]
     pub fn push_callable(&mut self, name: &str) {
         self.0.last_mut().unwrap().callables.insert(name.into());
     }
@@ -518,24 +544,32 @@ impl<'a, W: Write> Compiler<'a, W> {
         })
     }
 
+    pub fn compile(
+        mut self,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<W, Error> {
+        self.visit_stmt(&tree.program, tree, semantic_metadata)?;
+        let output = self.asm.output()?;
+        Ok(output)
+    }
+
+    #[inline]
     fn next_l(&mut self, slug: &str) -> String {
         self.current_l_num += 1;
         format!(".L{}_{slug}", self.current_l_num - 1)
     }
 
+    #[inline]
     fn enter_loop(&mut self, start_label: &str, end_label: &str) {
         self.loop_start_labels.push(start_label.to_string());
         self.loop_exit_labels.push(end_label.to_string());
     }
 
+    #[inline]
     fn exit_loop(&mut self) {
         self.loop_exit_labels.pop();
         self.loop_start_labels.pop();
-    }
-
-    pub fn compile(mut self, tree: &'a Tree) -> Result<W, Error> {
-        self.visit_stmt(&tree.program, tree)?;
-        Ok(self.asm.output()?)
     }
 
     fn visit_var_decl(
@@ -560,7 +594,12 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_callable_decl(&mut self, callable: &Decl, tree: &'a Tree) -> Result<(), Error> {
+    fn visit_callable_decl(
+        &mut self,
+        callable: &Decl,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
         match callable {
             Decl::Callable {
                 params,
@@ -582,6 +621,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                             statements,
                             return_type.is_some(),
                             tree,
+                            semantic_metadata,
                         )
                     }
                     _ => unreachable!(),
@@ -599,7 +639,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         });
         self.asm.push_cmd(Command::Sub {
             dst: Register::Rsp,
-            src: Register::Integer(32 + aligned_size as i32),
+            src: Register::Integer(aligned_size as i32),
         });
         Ok(())
     }
@@ -611,6 +651,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         params: &[Param],
         returns: bool,
         tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         let defaults = decls
             .iter()
@@ -649,7 +690,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 Ok::<(), Error>(())
             })?;
         defaults.into_iter().try_for_each(|(var_name, v)| {
-            self.visit_expr(&v, tree)?;
+            self.visit_expr(&v, tree, semantic_metadata)?;
             self.asm.push_cmd(Command::Pop(Register::Rax.into()));
             self.asm.push_cmd(Command::Mov {
                 dst: self.call_stack.lookup_var(var_name).into(),
@@ -668,13 +709,14 @@ impl<'a, W: Write> Compiler<'a, W> {
         statements: &StmtRef,
         returns: bool,
         tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push_ar();
         if scope_name == "main" {
             declarations
                 .iter()
                 .filter(|d| matches!(d, Decl::Callable { .. }))
-                .try_for_each(|c| self.visit_callable_decl(c, tree))?;
+                .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
         } else {
             self.call_stack.push_callable(scope_name);
         }
@@ -682,8 +724,15 @@ impl<'a, W: Write> Compiler<'a, W> {
             .comment(&format!("{scope_name} function entry point"))?;
         self.asm.label(scope_name)?;
         self.asm.comment("block")?;
-        self.setup_vars(scope_name, declarations, params, returns, tree)?;
-        self.visit_stmt(statements, tree)?;
+        self.setup_vars(
+            scope_name,
+            declarations,
+            params,
+            returns,
+            tree,
+            semantic_metadata,
+        )?;
+        self.visit_stmt(statements, tree, semantic_metadata)?;
         if returns {
             self.asm.push_cmd(Command::Mov {
                 dst: Register::Eax.into(),
@@ -702,7 +751,12 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &StmtRef, tree: &'a Tree) -> Result<(), Error> {
+    fn visit_stmt(
+        &mut self,
+        stmt: &StmtRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
         match tree.stmt_pool.get(*stmt) {
             Stmt::Program { name: _, block } => {
                 self.asm.directive("section .data")?;
@@ -717,22 +771,30 @@ impl<'a, W: Write> Compiler<'a, W> {
                     Stmt::Block {
                         declarations,
                         statements,
-                    } => self.enter_scope("main", &[], declarations, statements, false, tree),
+                    } => self.enter_scope(
+                        "main",
+                        &[],
+                        declarations,
+                        statements,
+                        false,
+                        tree,
+                        semantic_metadata,
+                    ),
                     _ => unreachable!(),
                 }
             }
             Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
-                self.visit_stmt(v, tree)?;
+                self.visit_stmt(v, tree, semantic_metadata)?;
                 Ok(())
             }),
             Stmt::NoOp => Ok(()),
-            Stmt::Call { call } => self.visit_call(call, tree),
+            Stmt::Call { call } => self.visit_call(call, tree, semantic_metadata),
             Stmt::Assign { left, right } => {
                 let var_name = match tree.expr_pool.get(*left) {
                     Expr::Var { name } => name.lexem(tree.source_code),
                     _ => unreachable!(),
                 };
-                self.visit_expr(right, tree)?;
+                self.visit_expr(right, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Mov {
                     dst: self.call_stack.lookup_var(var_name).into(),
@@ -745,7 +807,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 elifs,
                 else_statement,
             } => {
-                self.visit_expr(&cond.cond, tree)?;
+                self.visit_expr(&cond.cond, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Cmp {
                     op1: Register::Al.into(),
@@ -754,25 +816,25 @@ impl<'a, W: Write> Compiler<'a, W> {
                 let mut else_l = self.next_l("else");
                 let end_l = self.next_l("endif");
                 self.asm.push_cmd(Command::Je(else_l.clone()));
-                self.visit_stmt(&cond.expr, tree)?;
+                self.visit_stmt(&cond.expr, tree, semantic_metadata)?;
                 let mut elifs = elifs.iter();
                 while let Some(elif) = elifs.next() {
                     self.asm.push_cmd(Command::Jmp(else_l.clone()));
                     self.asm.label(&else_l)?;
                     else_l = self.next_l("else");
-                    self.visit_expr(&elif.cond, tree)?;
+                    self.visit_expr(&elif.cond, tree, semantic_metadata)?;
                     self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                     self.asm.push_cmd(Command::Cmp {
                         op1: Register::Al.into(),
                         op2: Register::Integer(0).into(),
                     });
                     self.asm.push_cmd(Command::Je(else_l.clone()));
-                    self.visit_stmt(&elif.expr, tree)?;
+                    self.visit_stmt(&elif.expr, tree, semantic_metadata)?;
                 }
                 if let Some(else_stmt) = else_statement {
                     self.asm.push_cmd(Command::Jmp(end_l.clone()));
                     self.asm.label(&else_l)?;
-                    self.visit_stmt(else_stmt, tree)?;
+                    self.visit_stmt(else_stmt, tree, semantic_metadata)?;
                     self.asm.label(&end_l)?;
                 } else {
                     self.asm.label(&else_l)?;
@@ -784,14 +846,14 @@ impl<'a, W: Write> Compiler<'a, W> {
                 let loop_end_l = self.next_l("endwhile");
                 self.enter_loop(&loop_l, &loop_end_l);
                 self.asm.label(&loop_l)?;
-                self.visit_expr(cond, tree)?;
+                self.visit_expr(cond, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Cmp {
                     op1: Register::Rax.into(),
                     op2: Register::Integer(0).into(),
                 });
                 self.asm.push_cmd(Command::Je(loop_end_l.clone()));
-                self.visit_stmt(body, tree)?;
+                self.visit_stmt(body, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Jmp(loop_l));
                 self.asm.label(&loop_end_l)?;
                 self.exit_loop();
@@ -804,14 +866,14 @@ impl<'a, W: Write> Compiler<'a, W> {
                 body,
             } => {
                 let var_mem = self.call_stack.lookup_var(var.lexem(tree.source_code));
-                self.visit_expr(init, tree)?;
+                self.visit_expr(init, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Dec(Register::Eax));
                 self.asm.push_cmd(Command::Mov {
                     dst: var_mem.clone().into(),
                     src: Register::Eax.into(),
                 });
-                self.visit_expr(end, tree)?;
+                self.visit_expr(end, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 self.asm.push_cmd(Command::Push(Register::Rax.into()));
                 let l1 = self.next_l("for_body");
@@ -829,10 +891,10 @@ impl<'a, W: Write> Compiler<'a, W> {
                 });
                 self.asm.push_cmd(Command::Cmp {
                     op1: Register::Eax.into(),
-                    op2: Memory::new(Register::Rsp).into(),
+                    op2: StackMemory::new(Register::Rsp).into(),
                 });
                 self.asm.push_cmd(Command::Jg(l2.clone()));
-                self.visit_stmt(body, tree)?;
+                self.visit_stmt(body, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Jmp(l1.clone()));
                 self.asm.label(&l2)?;
                 self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
@@ -857,7 +919,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             }
             Stmt::Exit(val) => {
                 if let Some(expr) = val {
-                    self.visit_expr(expr, tree)?;
+                    self.visit_expr(expr, tree, semantic_metadata)?;
                     self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 } else {
                     self.asm.push_cmd(Command::Xor {
@@ -873,13 +935,18 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_call(&mut self, call: &ExprRef, tree: &'a Tree) -> Result<(), Error> {
+    fn visit_call(
+        &mut self,
+        call: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
         match tree.expr_pool.get(*call) {
             Expr::Call { name, args } => {
                 let func_name = name.lexem(tree.source_code);
                 if self.call_stack.contains_callable(func_name) {
                     args.iter().try_for_each(|arg| {
-                        self.visit_expr(arg, tree)?;
+                        self.visit_expr(arg, tree, semantic_metadata)?;
                         Ok::<(), Error>(())
                     })?;
                     (0..args.len()).into_iter().try_for_each(|i| {
@@ -895,7 +962,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 }
                 self.asm.comment("call writeln")?;
                 for arg in args {
-                    self.visit_expr(arg, tree)?;
+                    self.visit_expr(arg, tree, semantic_metadata)?;
                     self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rcx.into(),
@@ -934,18 +1001,42 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_expr(&mut self, expr: &ExprRef, tree: &'a Tree) -> Result<(), Error> {
+    fn visit_expr(
+        &mut self,
+        expr: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<(), Error> {
         match tree.expr_pool.get(*expr) {
             Expr::Call { .. } => {
-                self.visit_call(expr, tree)?;
+                self.visit_call(expr, tree, semantic_metadata)?;
             }
-            Expr::Var { name } => {
-                let var_name = name.lexem(tree.source_code);
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Eax.into(),
-                    src: self.call_stack.lookup_var(var_name).into(),
-                });
-            }
+            Expr::Var { .. } => match semantic_metadata
+                .vars
+                .get(*semantic_metadata.var_symbols.get(expr).unwrap())
+            {
+                VarSymbol::Var {
+                    name,
+                    type_symbol: _,
+                } => {
+                    self.asm.push_cmd(Command::Mov {
+                        dst: Register::Eax.into(),
+                        src: self.call_stack.lookup_var(name).into(),
+                    });
+                }
+                VarSymbol::Const {
+                    value,
+                    type_symbol: _,
+                } => match value {
+                    ConstValue::Integer(i) => {
+                        self.asm.push_cmd(Command::Mov {
+                            dst: Register::Eax.into(),
+                            src: Register::Integer(*i).into(),
+                        });
+                    }
+                    _ => todo!(),
+                },
+            },
             Expr::LiteralInteger(i) => self.asm.push_cmd(Command::Mov {
                 dst: Register::Rax.into(),
                 src: Register::Integer(*i).into(),
@@ -961,7 +1052,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 })
             }
             Expr::UnaryOp { op, expr } => {
-                self.visit_expr(expr, tree)?;
+                self.visit_expr(expr, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 match op {
                     TokenType::Plus => {}
@@ -982,8 +1073,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                 }
             }
             Expr::BinOp { op, left, right } => {
-                self.visit_expr(left, tree)?;
-                self.visit_expr(right, tree)?;
+                self.visit_expr(left, tree, semantic_metadata)?;
+                self.visit_expr(right, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 match op {
