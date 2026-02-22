@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::LazyLock};
 use itertools::Itertools;
 use tracing::debug;
 
+use crate::utils::Size;
 use crate::{
     error::Error,
     interpreter::{BuiltinCtx, Value},
@@ -35,6 +36,21 @@ pub enum TypeSymbol {
 }
 
 impl TypeSymbol {
+    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Size {
+        match self {
+            Self::Integer => Size::S32bit,
+            Self::Real => Size::S64bit,
+            Self::Boolean => Size::S8bit,
+            Self::Char => Size::S8bit,
+            Self::Range(sym) => semantic_metadata
+                .types
+                .get(*sym)
+                .get_size(semantic_metadata),
+            Self::Any => Size::S64bit,
+            Self::Empty => Size::Null,
+            _ => Size::Unkown,
+        }
+    }
     pub fn is_ordinal(&self) -> bool {
         matches!(
             self,

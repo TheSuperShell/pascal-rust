@@ -716,6 +716,9 @@ impl SemanticAnalyzer {
                         type_symbol: type_symbol_ref,
                     };
                     let var_symbol_ref = self.semantic_metadata.vars.alloc(var_symbol);
+                    self.semantic_metadata
+                        .var_symbols
+                        .insert(param.var, var_symbol_ref);
                     self.current_scope
                         .define_var(var_name.lexem(tree.source_code), var_symbol_ref);
                     params_vec.push(var_symbol_ref);

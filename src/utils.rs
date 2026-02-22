@@ -163,3 +163,15 @@ macro_rules! define_ref {
 }
 
 pub(crate) use define_ref;
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+#[allow(dead_code)]
+pub enum Size {
+    S8bit,
+    S16bit,
+    S32bit,
+    S64bit,
+    S128bit,
+    Null,
+    Unkown,
+}

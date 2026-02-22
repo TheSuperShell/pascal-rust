@@ -2,17 +2,14 @@ program compiled;
     const lower_lim = 1;
         upper_lim = 30;
     var b: integer;
-    var o: integer = 0;
 
-    function fib(num: integer; out extra: integer): integer;
+    function fib(num: integer): integer;
     begin
-        extra := extra + num;
         if num <= 2 then
             exit(num);
-        exit(fib(num - 1, extra)  + fib(num - 2, extra))
+        exit(fib(num - 1)  + fib(num - 2))
     end;
 begin
     for b := lower_lim to upper_lim do
-        writeln(fib(b, o));
-    writeln(o);
+        writeln(fib(b));
 end.
