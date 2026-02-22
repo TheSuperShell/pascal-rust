@@ -508,7 +508,7 @@ impl CallStack {
                     .position(|v| v == name)
                     .map(|i| (ar.members.len(), i))
             })
-            .map(|(s, i)| Register::Rbp.with_offset((s + 1 - i) * 4))
+            .map(|(s, i)| Register::Rbp.with_offset((s - i) * 4))
             .unwrap_or_else(|| panic!("unkown value {name}"))
     }
 
@@ -601,24 +601,6 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_var_decl_global(&mut self, var: &Decl, tree: &'a Tree) -> Result<(), Error> {
-        match var {
-            Decl::VarDecl {
-                default_value: _,
-                var,
-                type_node: _,
-            } => {
-                let var_name = match tree.expr_pool.get(*var) {
-                    Expr::Var { name } => name.lexem(tree.source_code),
-                    _ => unreachable!(),
-                };
-                self.asm.directive(&format!("{var_name} resd 1"))?;
-                Ok(())
-            }
-            _ => unreachable!(),
-        }
-    }
-
     fn visit_callable_decl(
         &mut self,
         callable: &Decl,
@@ -680,31 +662,17 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         self.call_stack.push_ar();
-        let global = scope_name == "main";
-        if global {
-            declarations
-                .iter()
-                .filter(|d| matches!(d, Decl::Callable { .. }))
-                .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
-        } else {
-            self.call_stack.push_callable(scope_name);
-        }
+        self.call_stack.push_callable(scope_name);
         self.asm
             .comment(&format!("{scope_name} function entry point"))?;
         self.asm.label(scope_name)?;
         self.asm.comment("block")?;
-        let defaults = {
-            let defaults = declarations
-                .iter()
-                .filter(|d| matches!(d, Decl::VarDecl { .. }))
-                .map(|decl| self.visit_var_decl_local(decl, tree))
-                .filter_map(Result::transpose)
-                .collect::<Result<Vec<_>, Error>>()?;
-            defaults.iter().for_each(|(name, _)| {
-                self.call_stack.push_var(name);
-            });
-            defaults
-        };
+        let defaults = declarations
+            .iter()
+            .filter(|d| matches!(d, Decl::VarDecl { .. }))
+            .map(|decl| self.visit_var_decl_local(decl, tree))
+            .filter_map(Result::transpose)
+            .collect::<Result<Vec<_>, Error>>()?;
         let param_names: Vec<&str> = params
             .iter()
             .map(|param| match tree.expr_pool.get(param.var) {
@@ -760,6 +728,18 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
+    /// TODO: support any kind of default
+    fn visit_default(&mut self, expr: &ExprRef, tree: &'a Tree) -> i32 {
+        match tree.expr_pool.get(*expr) {
+            Expr::LiteralInteger(i) => *i,
+            Expr::UnaryOp { op, expr } => match op {
+                TokenType::Minus => -self.visit_default(expr, tree),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
     fn enter_global_scope(
         &mut self,
         declarations: &[Decl],
@@ -767,11 +747,42 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
-        self.asm.directive("section .bss")?;
-        declarations
+        self.asm.directive("section .data")?;
+        self.asm.directive("fmt db \"%d\", 0")?;
+        self.asm.directive("newline db 10, 0")?;
+        let global_vars = declarations
             .iter()
             .filter(|d| matches!(d, Decl::VarDecl { .. }))
-            .try_for_each(|d| self.visit_var_decl_global(d, tree))?;
+            .map(|d| match d {
+                Decl::VarDecl {
+                    default_value,
+                    var,
+                    type_node: _,
+                } => (
+                    match tree.expr_pool.get(*var) {
+                        Expr::Var { name } => name.lexem(tree.source_code),
+                        _ => unreachable!(),
+                    },
+                    default_value,
+                ),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        global_vars
+            .iter()
+            .filter(|(_, default)| default.is_some())
+            .map(|(name, value)| (name, value.unwrap()))
+            .try_for_each(|(name, value)| {
+                let value = self.visit_default(&value, tree);
+                self.asm.directive(&format!("{name} dd {value}"))?;
+                Ok::<(), Error>(())
+            })?;
+        self.asm.newline()?;
+        self.asm.directive("section .bss")?;
+        global_vars
+            .iter()
+            .filter(|(_, defualt)| defualt.is_none())
+            .try_for_each(|(name, _)| self.asm.directive(&format!("{name} resd 1")))?;
         self.asm.newline()?;
         self.call_stack.push_global_ar();
         self.asm.directive("section .text")?;
@@ -806,19 +817,13 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
         match tree.stmt_pool.get(*stmt) {
-            Stmt::Program { name: _, block } => {
-                self.asm.directive("section .data")?;
-                self.asm.directive("fmt db \"%d\", 0")?;
-                self.asm.directive("newline db 10, 0")?;
-                self.asm.newline()?;
-                match tree.stmt_pool.get(*block) {
-                    Stmt::Block {
-                        declarations,
-                        statements,
-                    } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
-                    _ => unreachable!(),
-                }
-            }
+            Stmt::Program { name: _, block } => match tree.stmt_pool.get(*block) {
+                Stmt::Block {
+                    declarations,
+                    statements,
+                } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
+                _ => unreachable!(),
+            },
             Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
                 self.visit_stmt(v, tree, semantic_metadata)?;
                 Ok(())
