@@ -5,8 +5,12 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 pub fn init_logging(stack: bool, scope: bool) {
     let directives = format!(
-        "pascal=warn,pascal::semantic={},pascal::interp={}",
+        "pascal=warn,pascal::semantic={},pascal::interp={},pascal::compiler={}",
         match scope {
+            true => "debug",
+            false => "warn",
+        },
+        match stack {
             true => "debug",
             false => "warn",
         },
@@ -26,7 +30,8 @@ fn main() {
                 .about("Compile a pascal file")
                 .arg(arg!(<path> "Path of the scrip"))
                 .arg(arg!(<target> "Compilation target"))
-                .arg(arg!(--scope "Turn on scope logging")),
+                .arg(arg!(--scope "Turn on scope logging"))
+                .arg(arg!(--stack "Turn on stack logging")),
         )
         .subcommand(
             Command::new("interp")
@@ -39,7 +44,7 @@ fn main() {
     let matches = cmd.get_matches();
     match matches.subcommand() {
         Some(("compile", sub_m)) => {
-            init_logging(false, sub_m.get_flag("scope"));
+            init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
             let path = sub_m.get_one::<String>("path").unwrap();
             let target = sub_m.get_one::<String>("target").unwrap();
             match compile_into_file(path, target) {

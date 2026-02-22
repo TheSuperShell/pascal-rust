@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use crate::{
     error::Error,
     parser::{Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
@@ -5,7 +7,7 @@ use crate::{
     symbols::{ConstValue, VarLocality, VarPassMode, VarSymbol},
     tokens::TokenType,
 };
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 use std::{collections::HashSet, io::Write};
 
 #[derive(Debug, Clone)]
@@ -479,86 +481,69 @@ impl<'a, W: Write> Assambler<'a, W> {
 }
 
 #[derive(Debug, Clone)]
-struct ActivationRecord {
-    members: Vec<String>,
+struct Locals<'a> {
+    scope_name: &'a str,
+    local_variables: HashMap<String, usize>,
     callables: HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
-struct CallStack(Vec<ActivationRecord>);
-
-impl CallStack {
+impl<'a> Locals<'a> {
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self {
+            scope_name: "global",
+            local_variables: HashMap::new(),
+            callables: HashSet::new(),
+        }
     }
 
     #[inline]
-    pub fn push_global_ar(&mut self) {
-        let ar = ActivationRecord {
-            members: Vec::new(),
-            callables: HashSet::new(),
-        };
-        self.0.push(ar);
+    pub fn push_ar(&mut self, scope_name: &'a str) {
+        self.scope_name = scope_name;
+        debug!(target: "pascal::compiler", "Entering {} scope", self.scope_name);
+        self.local_variables = HashMap::new()
     }
     #[inline]
-    pub fn push_ar(&mut self) {
-        let mut ar = ActivationRecord {
-            members: Vec::new(),
-            callables: HashSet::new(),
-        };
-        self.0.last().map(|ar| &ar.callables).map(|callables| {
-            ar.callables.extend(callables.clone());
-        });
-        self.0.push(ar);
-    }
-    #[inline]
-    pub fn pop_ar(&mut self) -> Option<ActivationRecord> {
-        self.0.pop()
+    pub fn pop_ar(&mut self) {
+        debug!(target: "pascal::compiler", "Leaving {} scope", self.scope_name);
+        debug!(target: "pascal::compiler", "{:?}", self.local_variables.keys());
+        self.local_variables = HashMap::new();
+        debug!(target: "pascal::compiler", "Entering global scope");
     }
 
     #[inline]
     pub fn push_var(&mut self, name: &str) {
-        let last_ar = self.0.last_mut().unwrap();
-        last_ar.members.push(name.into());
+        let next_i = self.local_variables.len() + 1;
+        self.local_variables.insert(name.into(), next_i);
     }
 
     #[inline]
-    pub fn lookup_var_mem<'a>(&self, name: &'a str) -> StackMemory<'a> {
-        self.0
-            .last()
-            .and_then(|ar| {
-                ar.members
-                    .iter()
-                    .position(|v| v == name)
-                    .map(|i| (ar.members.len(), i))
-            })
-            .map(|(s, i)| Register::Rbp.with_offset((s - i) * 8))
+    pub fn lookup_var_mem<'s>(&self, name: &'s str) -> StackMemory<'s> {
+        self.local_variables
+            .get(name)
+            .map(|i| Register::Rbp.with_offset((self.local_variables.len() - i) * 8))
             .unwrap_or_else(|| panic!("unkown value {name}"))
     }
 
     #[inline]
     pub fn aligned_size(&self) -> usize {
-        ((self.0.last().unwrap().members.len() * 8 + 15) / 16) * 16
+        ((self.local_variables.len() * 8 + 15) / 16) * 16
     }
 
     #[inline]
     pub fn contains_callable(&self, name: &str) -> bool {
-        self.0
-            .last()
-            .map(|ar| ar.callables.contains(name))
-            .unwrap_or(false)
+        self.callables.contains(name)
     }
 
     #[inline]
     pub fn push_callable(&mut self, name: &str) {
-        self.0.last_mut().unwrap().callables.insert(name.into());
+        self.callables.insert(name.into());
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Compiler<'a, W: Write> {
     asm: Assambler<'a, W>,
-    call_stack: CallStack,
+    call_stack: Locals<'a>,
     current_l_num: u64,
     loop_exit_labels: Vec<String>,
     loop_start_labels: Vec<String>,
@@ -568,7 +553,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     pub fn new(output: W) -> Result<Self, Error> {
         Ok(Compiler {
             asm: Assambler::new(output, true),
-            call_stack: CallStack::new(),
+            call_stack: Locals::new(),
             current_l_num: 0,
             loop_exit_labels: Vec::new(),
             loop_start_labels: Vec::new(),
@@ -677,7 +662,7 @@ impl<'a, W: Write> Compiler<'a, W> {
 
     fn enter_scope(
         &mut self,
-        scope_name: &str,
+        scope_name: &'a str,
         params: &[Param],
         declarations: &[Decl],
         statements: &StmtRef,
@@ -685,7 +670,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
-        self.call_stack.push_ar();
+        self.call_stack.push_ar(scope_name);
         self.call_stack.push_callable(scope_name);
         self.asm
             .comment(&format!("{scope_name} function entry point"))?;
@@ -771,6 +756,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<(), Error> {
+        debug!(target: "pascal::compiler", "Entering global scope");
         self.asm.directive("section .data")?;
         self.asm.directive("fmt db \"%d\", 0")?;
         self.asm.directive("newline db 10, 0")?;
@@ -808,7 +794,6 @@ impl<'a, W: Write> Compiler<'a, W> {
             .filter(|(_, defualt)| defualt.is_none())
             .try_for_each(|(name, _)| self.asm.directive(&format!("{name} resq 1")))?;
         self.asm.newline()?;
-        self.call_stack.push_global_ar();
         self.asm.directive("section .text")?;
         self.asm.directive("global main")?;
         self.asm.directive("extern printf")?;
@@ -830,7 +815,6 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.push_cmd(Command::Leave);
         self.asm.push_cmd(Command::Ret);
         self.asm.comment("end block")?;
-        self.call_stack.pop_ar();
         Ok(())
     }
 
