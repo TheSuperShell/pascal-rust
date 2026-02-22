@@ -180,6 +180,12 @@ pub enum VarSymbol {
 }
 
 impl VarSymbol {
+    pub fn pass_mode(&self) -> Option<&VarPassMode> {
+        match self {
+            Self::Var { pass_mode, .. } => Some(pass_mode),
+            _ => None,
+        }
+    }
     pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
         match self {
             Self::Var {
@@ -288,7 +294,7 @@ pub enum ParamInputMode {
 #[derive(Debug, Clone)]
 pub struct CallableSymbol {
     pub name: String,
-    pub params: Vec<(VarSymbolRef, VarPassMode)>,
+    pub params: Vec<VarSymbolRef>,
     pub param_input_mode: ParamInputMode,
     pub body: CallableType,
     pub return_type: Option<TypeSymbolRef>,
@@ -304,14 +310,17 @@ impl CallableSymbol {
         let params = self
             .params
             .iter()
-            .map(|(v, mode)| (semantic_metadata.vars.get(*v), mode))
-            .map(|(v, mode)| {
+            .map(|v| semantic_metadata.vars.get(*v))
+            .map(|v| {
                 format!(
                     "{}{}",
                     v.to_string(semantic_metadata),
-                    match mode {
-                        VarPassMode::Ref => "OUT",
-                        VarPassMode::Val => "",
+                    match v {
+                        VarSymbol::Var { pass_mode, .. } => match pass_mode {
+                            VarPassMode::Ref => "OUT",
+                            VarPassMode::Val => "",
+                        },
+                        _ => unreachable!(),
                     }
                 )
             })

@@ -695,8 +695,7 @@ impl SemanticAnalyzer {
                     Some(old),
                 ));
                 debug!(target: "pascal::semantic", "ENTER scope: {}", self.current_scope.scope_name());
-                let mut params_vec: Vec<(VarSymbolRef, VarPassMode)> =
-                    Vec::with_capacity(params.len());
+                let mut params_vec: Vec<VarSymbolRef> = Vec::with_capacity(params.len());
                 for param in params {
                     let var_expr = tree.expr_pool.get(param.var);
                     let var_name = match var_expr {
@@ -719,7 +718,7 @@ impl SemanticAnalyzer {
                     let var_symbol_ref = self.semantic_metadata.vars.alloc(var_symbol);
                     self.current_scope
                         .define_var(var_name.lexem(tree.source_code), var_symbol_ref);
-                    params_vec.push((var_symbol_ref, param_mode));
+                    params_vec.push(var_symbol_ref);
                 }
                 let return_type = match return_type {
                     Some(return_type_ref) => Some(self.visit_type(*return_type_ref, tree)?),
@@ -914,7 +913,7 @@ impl SemanticAnalyzer {
             .cycle()
             .take(args.len())
             .zip(arg_expr)
-            .map(|((p, _), expr_type)| {
+            .map(|(p, expr_type)| {
                 let expr_type = self.semantic_metadata.types.get(expr_type);
                 let var_symbol = self.semantic_metadata.vars.get(*p);
                 let param_type = match var_symbol {

@@ -1039,14 +1039,27 @@ impl<'a, W: Write> Compiler<'a, W> {
                 if self.call_stack.contains_callable(func_name) {
                     params
                         .iter()
-                        .filter(|((_, m), _)| matches!(m, VarPassMode::Val))
+                        .filter(|(v, _)| {
+                            matches!(
+                                semantic_metadata.vars.get(**v).pass_mode().unwrap(),
+                                VarPassMode::Val
+                            )
+                        })
                         .try_for_each(|(_, arg)| {
                             self.visit_expr(arg, tree, semantic_metadata)?;
                             Ok::<(), Error>(())
                         })?;
-                    params.iter().enumerate().rev().try_for_each(
-                        |(i, ((_, param_mode), arg))| {
+                    params
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .try_for_each(|(i, (var_symbol, arg))| {
                             let reg = Register::from_param_index64(i);
+                            let param_mode = semantic_metadata
+                                .vars
+                                .get(**var_symbol)
+                                .pass_mode()
+                                .unwrap();
                             match param_mode {
                                 VarPassMode::Val => self.asm.push_cmd(Command::Pop(reg.into())),
                                 VarPassMode::Ref => {
@@ -1065,8 +1078,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                                 }
                             }
                             Ok::<(), Error>(())
-                        },
-                    )?;
+                        })?;
                     self.asm.push_cmd(Command::Call { name: func_name });
                     return Ok(());
                 }

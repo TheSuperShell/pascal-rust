@@ -668,7 +668,8 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     name.lexem(tree.source_code),
                     self.call_stack.current_nesting() + 1,
                 );
-                for ((inp, mode), arg) in params {
+                for (inp, arg) in params {
+                    let mode = semantic_metadata.vars.get(*inp).pass_mode().unwrap();
                     match mode {
                         VarPassMode::Val => {
                             let var_symbol = semantic_metadata.vars.get(*inp);
@@ -729,7 +730,8 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             }
             CallableType::Builtin { func: f } => {
                 let values: Vec<(LValue, &TypeSymbol)> = params
-                    .map(|((v, m), a)| {
+                    .map(|(v, a)| {
+                        let m = semantic_metadata.vars.get(*v).pass_mode().unwrap();
                         match m {
                         VarPassMode::Val => self.visit_expr(*a, tree, semantic_metadata).and_then(|e| {
                             match semantic_metadata.vars.get(*v) {

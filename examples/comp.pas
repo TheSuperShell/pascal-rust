@@ -1,7 +1,7 @@
 program compiled;
     const lower_lim = 1;
         upper_lim = 30;
-    var b: integer = 5;
+    var b: integer;
     var o: integer = 0;
 
     function fib(num: integer; out extra: integer): integer;

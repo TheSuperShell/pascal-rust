@@ -83,14 +83,13 @@ impl SymbolTable {
         let writeln = callables.alloc(CallableSymbol {
             name: "writeln".into(),
             return_type: None,
-            params: vec![(
-                vars.alloc(VarSymbol::Var {
+            params: vec![
+                (vars.alloc(VarSymbol::Var {
                     name: "val".into(),
                     pass_mode: VarPassMode::Val,
                     type_symbol: types.alloc(TypeSymbol::Any),
-                }),
-                VarPassMode::Val,
-            )],
+                })),
+            ],
             param_input_mode: ParamInputMode::Repeat,
             body: CallableType::Builtin { func: writeln },
         });
@@ -98,14 +97,13 @@ impl SymbolTable {
         let readln = callables.alloc(CallableSymbol {
             name: "readln".into(),
             return_type: None,
-            params: vec![(
-                vars.alloc(VarSymbol::Var {
+            params: vec![
+                (vars.alloc(VarSymbol::Var {
                     name: "val".into(),
                     pass_mode: VarPassMode::Ref,
                     type_symbol: types.alloc(TypeSymbol::String),
-                }),
-                VarPassMode::Ref,
-            )],
+                })),
+            ],
             param_input_mode: ParamInputMode::Seq,
             body: CallableType::Builtin { func: readln },
         });
