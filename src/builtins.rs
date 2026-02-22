@@ -4,7 +4,7 @@ use crate::{
     semantic_analyzer::SemanticMetadata,
     symbols::{
         BuiltinInput, CallableSymbol, CallableSymbolRef, CallableType, LValue, ParamInputMode,
-        ParamMode, SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef,
+        SymbolTable, TypeSymbol, TypeSymbolRef, VarPassMode, VarSymbol, VarSymbolRef,
     },
     utils::NodePool,
 };
@@ -86,9 +86,10 @@ impl SymbolTable {
             params: vec![(
                 vars.alloc(VarSymbol::Var {
                     name: "val".into(),
+                    pass_mode: VarPassMode::Val,
                     type_symbol: types.alloc(TypeSymbol::Any),
                 }),
-                ParamMode::Var,
+                VarPassMode::Val,
             )],
             param_input_mode: ParamInputMode::Repeat,
             body: CallableType::Builtin { func: writeln },
@@ -100,9 +101,10 @@ impl SymbolTable {
             params: vec![(
                 vars.alloc(VarSymbol::Var {
                     name: "val".into(),
+                    pass_mode: VarPassMode::Ref,
                     type_symbol: types.alloc(TypeSymbol::String),
                 }),
-                ParamMode::Ref,
+                VarPassMode::Ref,
             )],
             param_input_mode: ParamInputMode::Seq,
             body: CallableType::Builtin { func: readln },

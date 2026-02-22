@@ -170,6 +170,7 @@ impl Into<Value> for ConstValue {
 pub enum VarSymbol {
     Var {
         name: String,
+        pass_mode: VarPassMode,
         type_symbol: TypeSymbolRef,
     },
     Const {
@@ -181,8 +182,16 @@ pub enum VarSymbol {
 impl VarSymbol {
     pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
         match self {
-            Self::Var { name, type_symbol } => format!(
-                "<Var:{}>:{}",
+            Self::Var {
+                name,
+                type_symbol,
+                pass_mode,
+            } => format!(
+                "<Var{}:{}>:{}",
+                match pass_mode {
+                    VarPassMode::Val => "",
+                    VarPassMode::Ref => " ref",
+                },
                 name,
                 semantic_metadata
                     .types
@@ -202,9 +211,15 @@ impl VarSymbol {
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
-pub enum VarType {
+pub enum VarLocality {
     Local,
     Global,
+}
+
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum VarPassMode {
+    Val,
+    Ref,
 }
 
 #[derive(Debug, Clone)]
@@ -265,12 +280,6 @@ pub enum CallableType {
 }
 
 #[derive(Debug, Clone)]
-pub enum ParamMode {
-    Var,
-    Ref,
-}
-
-#[derive(Debug, Clone)]
 pub enum ParamInputMode {
     Seq,
     Repeat,
@@ -279,7 +288,7 @@ pub enum ParamInputMode {
 #[derive(Debug, Clone)]
 pub struct CallableSymbol {
     pub name: String,
-    pub params: Vec<(VarSymbolRef, ParamMode)>,
+    pub params: Vec<(VarSymbolRef, VarPassMode)>,
     pub param_input_mode: ParamInputMode,
     pub body: CallableType,
     pub return_type: Option<TypeSymbolRef>,
@@ -301,8 +310,8 @@ impl CallableSymbol {
                     "{}{}",
                     v.to_string(semantic_metadata),
                     match mode {
-                        ParamMode::Ref => "OUT",
-                        ParamMode::Var => "",
+                        VarPassMode::Ref => "OUT",
+                        VarPassMode::Val => "",
                     }
                 )
             })
@@ -430,10 +439,10 @@ impl SymbolTable {
         &self,
         name: &str,
         current_scope_only: bool,
-    ) -> Option<(VarSymbolRef, VarType)> {
+    ) -> Option<(VarSymbolRef, VarLocality)> {
         let var_type = match self.scope_level {
-            1..2 => VarType::Global,
-            _ => VarType::Local,
+            1..2 => VarLocality::Global,
+            _ => VarLocality::Local,
         };
         self.lookup_var_internal(name, current_scope_only, var_type)
     }
@@ -442,8 +451,8 @@ impl SymbolTable {
         &self,
         name: &str,
         current_scope_only: bool,
-        var_type: VarType,
-    ) -> Option<(VarSymbolRef, VarType)> {
+        var_type: VarLocality,
+    ) -> Option<(VarSymbolRef, VarLocality)> {
         let name = &name.to_lowercase();
         debug!(target: "pascal::semantic", "Lookup var (scope name: {}): {}", self.scope_name, name);
         if self.var_symbols.contains_key(name) {
@@ -455,7 +464,7 @@ impl SymbolTable {
             return None;
         }
         if let Some(table) = &self.enclosing_scope {
-            return table.lookup_var_internal(name, current_scope_only, VarType::Global);
+            return table.lookup_var_internal(name, current_scope_only, VarLocality::Global);
         };
         debug!(target: "pascal::semantic", "var {} was not found", name);
         None

@@ -13,7 +13,9 @@ use crate::{
     error::{Error, ErrorCode},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     semantic_analyzer::SemanticMetadata,
-    symbols::{CallableType, LValue, ParamMode, RangeSymbol, TypeSymbol, TypeSymbolRef, VarSymbol},
+    symbols::{
+        CallableType, LValue, RangeSymbol, TypeSymbol, TypeSymbolRef, VarPassMode, VarSymbol,
+    },
     tokens::{Token, TokenType},
     utils::{NodePool, Pos},
 };
@@ -519,6 +521,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                     VarSymbol::Var {
                         name,
                         type_symbol: _,
+                        ..
                     } => Ok(self
                         .call_stack
                         .peek()
@@ -667,11 +670,13 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 );
                 for ((inp, mode), arg) in params {
                     match mode {
-                        ParamMode::Var => {
+                        VarPassMode::Val => {
                             let var_symbol = semantic_metadata.vars.get(*inp);
                             let value = self.visit_expr(*arg, tree, semantic_metadata)?;
                             let var_name = match var_symbol {
-                                VarSymbol::Var { name, type_symbol } => {
+                                VarSymbol::Var {
+                                    name, type_symbol, ..
+                                } => {
                                     if let Some(r) = self.type_range_map.get(type_symbol) {
                                         let range_symbol = self.range_symbols.get(*r);
                                         if !range_symbol.within_bounds(&value, semantic_metadata) {
@@ -692,7 +697,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                             ar.set(var_name);
                             ar.set_value(var_name, value);
                         }
-                        ParamMode::Ref => {}
+                        VarPassMode::Ref => {}
                     }
                 }
                 if let Some(_) = symbol.return_type {
@@ -726,7 +731,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 let values: Vec<(LValue, &TypeSymbol)> = params
                     .map(|((v, m), a)| {
                         match m {
-                        ParamMode::Var => self.visit_expr(*a, tree, semantic_metadata).and_then(|e| {
+                        VarPassMode::Val => self.visit_expr(*a, tree, semantic_metadata).and_then(|e| {
                             match semantic_metadata.vars.get(*v) {
                                 VarSymbol::Var { type_symbol, .. } => {
                                     if let Some(r) = self.type_range_map.get(type_symbol) {
@@ -752,7 +757,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                                     .get(*semantic_metadata.expr_type_map.get(a).unwrap()),
                             ))
                         }),
-                        ParamMode::Ref => match tree.expr_pool.get(*a) {
+                        VarPassMode::Ref => match tree.expr_pool.get(*a) {
                             Expr::Var { name } => Ok((
                                 LValue::Ref {
                                     name: name.lexem(tree.source_code),

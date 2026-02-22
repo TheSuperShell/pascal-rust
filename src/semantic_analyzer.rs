@@ -4,8 +4,8 @@ use crate::{
     error::{Error, ErrorCode, Errors},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
     symbols::{
-        CallableSymbol, CallableSymbolRef, CallableType, ConstValue, ParamInputMode, ParamMode,
-        SymbolTable, TypeSymbol, TypeSymbolRef, VarSymbol, VarSymbolRef, VarType,
+        CallableSymbol, CallableSymbolRef, CallableType, ConstValue, ParamInputMode, SymbolTable,
+        TypeSymbol, TypeSymbolRef, VarLocality, VarPassMode, VarSymbol, VarSymbolRef,
     },
     tokens::{Token, TokenType},
     utils::NodePool,
@@ -18,7 +18,7 @@ pub struct SemanticMetadata {
     pub type_type_map: HashMap<TypeRef, TypeSymbolRef>,
     pub callable_symbols: HashMap<ExprRef, CallableSymbolRef>,
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
-    pub var_types: HashMap<ExprRef, VarType>,
+    pub var_types: HashMap<ExprRef, VarLocality>,
 
     pub types: NodePool<TypeSymbolRef, TypeSymbol>,
     pub vars: NodePool<VarSymbolRef, VarSymbol>,
@@ -28,6 +28,20 @@ pub struct SemanticMetadata {
 impl SemanticMetadata {
     pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
         self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
+    }
+    pub fn get_callable_symbol(&self, expr_ref: &ExprRef) -> Option<&CallableSymbol> {
+        self.callable_symbols
+            .get(expr_ref)
+            .map(|s| self.callables.get(*s))
+    }
+    pub fn get_var_symbol(&self, expr_ref: &ExprRef) -> Option<&VarSymbol> {
+        self.var_symbols.get(expr_ref).map(|s| self.vars.get(*s))
+    }
+    pub fn get_var_pass_mode(&self, expr_ref: &ExprRef) -> Option<&VarPassMode> {
+        self.get_var_symbol(expr_ref).and_then(|s| match s {
+            VarSymbol::Var { pass_mode, .. } => Some(pass_mode),
+            _ => None,
+        })
     }
 
     #[cfg(test)]
@@ -256,10 +270,7 @@ impl SemanticAnalyzer {
                     .vars
                     .get(*self.semantic_metadata.var_symbols.get(var).unwrap());
                 match var_symbol {
-                    VarSymbol::Var {
-                        name,
-                        type_symbol: _,
-                    } => {
+                    VarSymbol::Var { name, .. } => {
                         if self.current_scope.lookup_var(name, false).is_none() {
                             return Err(Error::SemanticError {
                                 msg: format!("unkown variable {name}"),
@@ -684,7 +695,7 @@ impl SemanticAnalyzer {
                     Some(old),
                 ));
                 debug!(target: "pascal::semantic", "ENTER scope: {}", self.current_scope.scope_name());
-                let mut params_vec: Vec<(VarSymbolRef, ParamMode)> =
+                let mut params_vec: Vec<(VarSymbolRef, VarPassMode)> =
                     Vec::with_capacity(params.len());
                 for param in params {
                     let var_expr = tree.expr_pool.get(param.var);
@@ -696,17 +707,18 @@ impl SemanticAnalyzer {
                     self.semantic_metadata
                         .expr_type_map
                         .insert(param.var, type_symbol_ref);
+                    let param_mode = match param.out {
+                        true => VarPassMode::Ref,
+                        false => VarPassMode::Val,
+                    };
                     let var_symbol = VarSymbol::Var {
                         name: var_name.lexem(tree.source_code).to_string(),
+                        pass_mode: param_mode,
                         type_symbol: type_symbol_ref,
                     };
                     let var_symbol_ref = self.semantic_metadata.vars.alloc(var_symbol);
                     self.current_scope
                         .define_var(var_name.lexem(tree.source_code), var_symbol_ref);
-                    let param_mode = match param.out {
-                        true => ParamMode::Ref,
-                        false => ParamMode::Var,
-                    };
                     params_vec.push((var_symbol_ref, param_mode));
                 }
                 let return_type = match return_type {
@@ -740,11 +752,13 @@ impl SemanticAnalyzer {
                     }
                     let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
                         name: "result".to_string(),
+                        pass_mode: VarPassMode::Val,
                         type_symbol: return_type_ref,
                     });
                     self.current_scope.define_var("result", return_var);
                     let return_var = self.semantic_metadata.vars.alloc(VarSymbol::Var {
                         name: name.lexem(tree.source_code).into(),
+                        pass_mode: VarPassMode::Val,
                         type_symbol: return_type_ref,
                     });
                     self.current_scope
@@ -830,6 +844,7 @@ impl SemanticAnalyzer {
                         .vars
                         .alloc(crate::symbols::VarSymbol::Var {
                             name: var_name.lexem(tree.source_code).into(),
+                            pass_mode: VarPassMode::Val,
                             type_symbol: type_symbol_ref,
                         });
                 self.current_scope
@@ -903,10 +918,9 @@ impl SemanticAnalyzer {
                 let expr_type = self.semantic_metadata.types.get(expr_type);
                 let var_symbol = self.semantic_metadata.vars.get(*p);
                 let param_type = match var_symbol {
-                    VarSymbol::Var {
-                        name: _,
-                        type_symbol,
-                    } => self.semantic_metadata.types.get(*type_symbol),
+                    VarSymbol::Var { type_symbol, .. } => {
+                        self.semantic_metadata.types.get(*type_symbol)
+                    }
                     _ => panic!("unreachable"),
                 };
                 if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {

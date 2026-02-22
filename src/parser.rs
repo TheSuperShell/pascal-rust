@@ -1025,6 +1025,13 @@ impl<'a> Tree<'a> {
         }
     }
 
+    pub fn get_var_name(&self, var_expr: &ExprRef) -> Option<&'a str> {
+        match self.expr_pool.get(*var_expr) {
+            Expr::Var { name } => Some(name.lexem(self.source_code)),
+            _ => None,
+        }
+    }
+
     fn visit_declaraction(&self, decl: &Decl, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match decl {
