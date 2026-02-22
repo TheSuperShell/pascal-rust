@@ -12,6 +12,28 @@ use std::fmt::Display;
 use std::{collections::HashSet, io::Write};
 
 #[derive(Debug, Clone)]
+enum DefaultValue {
+    Integer(i32),
+    Boolean(bool),
+}
+
+impl Display for DefaultValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            &Self::Integer(i) => write!(f, "{i}"),
+            &Self::Boolean(bool) => write!(
+                f,
+                "{}",
+                match bool {
+                    true => 1,
+                    false => 0,
+                }
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 /// - Rsp -> stack top pointer
 /// - Rbp -> stack base pointer
@@ -886,14 +908,18 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
-    /// TODO: support any kind of default
-    fn visit_default(&mut self, expr: &ExprRef, tree: &'a Tree) -> i32 {
+    fn visit_default(&mut self, expr: &ExprRef, tree: &'a Tree) -> DefaultValue {
         match tree.expr_pool.get(*expr) {
-            Expr::LiteralInteger(i) => *i,
-            Expr::UnaryOp { op, expr } => match op {
-                TokenType::Minus => -self.visit_default(expr, tree),
-                _ => unreachable!(),
-            },
+            Expr::LiteralInteger(i) => DefaultValue::Integer(*i),
+            Expr::LiteralBool(b) => DefaultValue::Boolean(*b),
+            Expr::UnaryOp { op, expr } => {
+                let inner = self.visit_default(expr, tree);
+                match (op, inner) {
+                    (TokenType::Minus, DefaultValue::Integer(i)) => DefaultValue::Integer(-i),
+                    (TokenType::Not, DefaultValue::Boolean(b)) => DefaultValue::Boolean(!b),
+                    _ => unreachable!(),
+                }
+            }
             _ => unreachable!(),
         }
     }
