@@ -187,6 +187,14 @@ impl Size {
             Self::S128bit => 16,
         }
     }
+    fn sign_extention<'a>(&self) -> Option<Command<'a>> {
+        match self {
+            Self::S16bit => Some(Command::Cwd),
+            Self::S32bit => Some(Command::Cdq),
+            Self::S64bit => Some(Command::Cqo),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,6 +356,7 @@ enum Command<'a> {
         src: Register<'a>,
     },
     Div(Register<'a>),
+    IDiv(Register<'a>),
     Neg(Register<'a>),
     Xor {
         dst: Register<'a>,
@@ -395,6 +404,9 @@ enum Command<'a> {
     Setge(Register<'a>),
     Setl(Register<'a>),
     Setle(Register<'a>),
+    Cwd,
+    Cdq,
+    Cqo,
 }
 
 #[derive(Debug, Clone)]
@@ -491,45 +503,27 @@ impl<'a, W: Write> Assambler<'a, W> {
         std::mem::replace(&mut self.commands, Vec::new())
             .into_iter()
             .try_for_each(|cmd| match cmd {
-                Command::Push(v) => {
-                    writeln!(self.output, "push {}", v)
-                }
-                Command::Mov { dst, src } => {
-                    writeln!(self.output, "mov {}, {}", dst, src)
-                }
+                Command::Cdq => writeln!(self.output, "cdq"),
+                Command::Cqo => writeln!(self.output, "cqo"),
+                Command::Cwd => writeln!(self.output, "cwd"),
+                Command::Push(v) => writeln!(self.output, "push {}", v),
+                Command::Mov { dst, src } => writeln!(self.output, "mov {}, {}", dst, src),
                 Command::Movzx { dst, src } => writeln!(self.output, "movzx {}, {}", dst, src),
-                Command::Add { dst, src } => {
-                    writeln!(self.output, "add {}, {}", dst, src)
-                }
-                Command::Sub { dst, src } => {
-                    writeln!(self.output, "sub {}, {}", dst, src)
-                }
-                Command::Imul { dst, src } => {
-                    writeln!(self.output, "imul {}, {}", dst, src)
-                }
-                Command::Div(v) => {
-                    writeln!(self.output, "div {}", v)
-                }
-                Command::Neg(dst) => {
-                    writeln!(self.output, "neg {}", dst)
-                }
+                Command::Add { dst, src } => writeln!(self.output, "add {}, {}", dst, src),
+                Command::Sub { dst, src } => writeln!(self.output, "sub {}, {}", dst, src),
+                Command::Imul { dst, src } => writeln!(self.output, "imul {}, {}", dst, src),
+                Command::Div(v) => writeln!(self.output, "div {}", v),
+                Command::IDiv(v) => writeln!(self.output, "idiv {}", v),
+                Command::Neg(dst) => writeln!(self.output, "neg {}", dst),
                 Command::Ret => writeln!(self.output, "ret"),
                 Command::Leave => writeln!(self.output, "leave"),
-                Command::Call { name } => {
-                    writeln!(self.output, "call {}", name)
-                }
-                Command::Xor { dst, src } => {
-                    writeln!(self.output, "xor {}, {}", dst, src)
-                }
-                Command::Not(r) => {
-                    writeln!(self.output, "not {}", r)
-                }
+                Command::Call { name } => writeln!(self.output, "call {}", name),
+                Command::Xor { dst, src } => writeln!(self.output, "xor {}, {}", dst, src),
+                Command::Not(r) => writeln!(self.output, "not {}", r),
                 Command::Test { op1, op2 } => writeln!(self.output, "test {}, {}", op1, op2),
                 Command::And { dst, src } => writeln!(self.output, "and {}, {}", dst, src),
                 Command::Or { dst, src } => writeln!(self.output, "or {}, {}", dst, src),
-                Command::Pop(v) => {
-                    writeln!(self.output, "pop {}", v)
-                }
+                Command::Pop(v) => writeln!(self.output, "pop {}", v),
                 Command::Inc(reg) => writeln!(self.output, "inc {}", reg),
                 Command::Dec(reg) => writeln!(self.output, "dec {}", reg),
                 Command::Lea { dst, src } => writeln!(self.output, "lea {}, {}", dst, src),
@@ -1471,12 +1465,9 @@ impl<'a, W: Write> Compiler<'a, W> {
                         });
                     }
                     TokenType::IntegerDiv => {
-                        self.asm.push_cmd(Command::Xor {
-                            dst: Register::Rdx,
-                            src: Register::Rdx,
-                        });
+                        self.asm.push_cmd(left_size.sign_extention().unwrap());
                         self.asm
-                            .push_cmd(Command::Div(Register::Rbx.to_size(left_size)));
+                            .push_cmd(Command::IDiv(Register::Rbx.to_size(left_size)));
                     }
                     TokenType::And => {
                         self.asm.push_cmd(Command::And {
