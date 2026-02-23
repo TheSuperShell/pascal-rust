@@ -1,8 +1,8 @@
 use tracing::debug;
 
 use crate::{
-    error::Error,
-    parser::{Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
+    error::{Error, Result},
+    parser::{Condition, Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
     semantic_analyzer::SemanticMetadata,
     symbols::{ConstValue, TypeSymbolRef, VarLocality, VarPassMode, VarSymbol},
     tokens::TokenType,
@@ -568,7 +568,7 @@ impl<'a, W: Write> Assambler<'a, W> {
         writeln!(self.output)
     }
 
-    pub fn output(mut self) -> Result<W, std::io::Error> {
+    pub fn output(mut self) -> std::io::Result<W> {
         self.flush()?;
         Ok(self.output)
     }
@@ -680,7 +680,7 @@ pub struct Compiler<'a, W: Write> {
 }
 
 impl<'a, W: Write> Compiler<'a, W> {
-    pub fn new(output: W) -> Result<Self, Error> {
+    pub fn new(output: W) -> Result<Self> {
         Ok(Compiler {
             asm: Assambler::new(output, true),
             call_stack: Locals::new(),
@@ -690,11 +690,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         })
     }
 
-    pub fn compile(
-        mut self,
-        tree: &'a Tree,
-        semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<W, Error> {
+    pub fn compile(mut self, tree: &'a Tree, semantic_metadata: &'a SemanticMetadata) -> Result<W> {
         self.visit_stmt(&tree.program, tree, semantic_metadata)?;
         let output = self.asm.output()?;
         Ok(output)
@@ -723,7 +719,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         var: &Decl,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<Option<(&'a str, Size, ExprRef)>, Error> {
+    ) -> Result<Option<(&'a str, Size, ExprRef)>> {
         match var {
             Decl::VarDecl {
                 default_value,
@@ -747,7 +743,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         callable: &Decl,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match callable {
             Decl::Callable {
                 params,
@@ -779,7 +775,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn enter_func(&mut self, aligned_size: usize) -> Result<(), Error> {
+    fn enter_func(&mut self, aligned_size: usize) -> Result<()> {
         self.asm.push_cmd(Command::Push(Register::Rbp.into()));
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rbp.into(),
@@ -803,7 +799,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         return_type: Option<TypeSymbolRef>,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         self.call_stack.push_ar(scope_name);
         self.call_stack.push_callable(scope_name);
         self.asm
@@ -815,7 +811,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .filter(|d| matches!(d, Decl::VarDecl { .. }))
             .map(|decl| self.visit_var_decl_local(decl, tree, semantic_metadata))
             .filter_map(Result::transpose)
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Result<Vec<_>>>()?;
         let param_names: Vec<(&str, Size, &VarPassMode)> = params
             .iter()
             .map(|param| {
@@ -924,7 +920,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         statements: &StmtRef,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         debug!(target: "pascal::compiler", "Entering global scope");
         self.asm.directive("section .data")?;
         self.asm.directive("fmt db \"%d\", 0")?;
@@ -1021,203 +1017,278 @@ impl<'a, W: Write> Compiler<'a, W> {
         stmt: &StmtRef,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match tree.stmt_pool.get(*stmt) {
-            Stmt::Program { name: _, block } => match tree.stmt_pool.get(*block) {
-                Stmt::Block {
-                    declarations,
-                    statements,
-                } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
-                _ => unreachable!(),
-            },
-            Stmt::Compound(stmts) => stmts.iter().try_for_each(|v| {
-                self.visit_stmt(v, tree, semantic_metadata)?;
-                Ok(())
-            }),
+            Stmt::Program { name: _, block } => self.visit_stmt(block, tree, semantic_metadata),
+            Stmt::Block {
+                declarations,
+                statements,
+            } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
+            Stmt::Compound(stmts) => stmts
+                .iter()
+                .try_for_each(|v| self.visit_stmt(v, tree, semantic_metadata).into()),
             Stmt::NoOp => Ok(()),
             Stmt::Call { call } => self.visit_call(call, tree, semantic_metadata),
-            Stmt::Assign { left, right } => {
-                let var_name = tree.get_var_name(left).unwrap();
-                let var_size = semantic_metadata
-                    .get_expr_type(left)
-                    .unwrap()
-                    .get_size(semantic_metadata);
-                let pass_mode = semantic_metadata.get_var_pass_mode(left).unwrap();
-                self.visit_expr(right, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                match pass_mode {
-                    VarPassMode::Val => {
-                        let source_op = match semantic_metadata.var_types.get(left).unwrap() {
-                            VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
-                            VarLocality::Global => GlobalMemory {
-                                name: var_name,
-                                size: var_size,
-                            }
-                            .into(),
-                        };
-                        self.asm.push_cmd(Command::Mov {
-                            dst: source_op,
-                            src: Register::Rax.to_size(var_size).into(),
-                        });
-                    }
-                    VarPassMode::Ref => {
-                        let var_addr = self.call_stack.lookup_var_addr(var_name);
-                        self.asm.push_cmd(Command::Mov {
-                            dst: Register::Rbx.into(),
-                            src: var_addr.into(),
-                        });
-                        self.asm.push_cmd(Command::Mov {
-                            dst: Register::Rbx.as_addr(var_size).into(),
-                            src: Register::Rax.to_size(var_size).into(),
-                        });
-                    }
-                };
-                Ok(())
-            }
+            Stmt::Assign { left, right } => self.visit_assign(left, right, tree, semantic_metadata),
             Stmt::If {
                 cond,
                 elifs,
                 else_statement,
-            } => {
-                self.visit_expr(&cond.cond, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                self.asm.push_cmd(Command::Cmp {
-                    op1: Register::Al.into(),
-                    op2: Register::Integer(0).into(),
-                });
-                let mut else_l = self.next_l("else");
-                let end_l = self.next_l("endif");
-                self.asm.push_cmd(Command::Je(else_l.clone()));
-                self.visit_stmt(&cond.expr, tree, semantic_metadata)?;
-                let mut elifs = elifs.iter();
-                while let Some(elif) = elifs.next() {
-                    self.asm.push_cmd(Command::Jmp(end_l.clone()));
-                    self.asm.label(&else_l)?;
-                    else_l = self.next_l("else");
-                    self.visit_expr(&elif.cond, tree, semantic_metadata)?;
-                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                    self.asm.push_cmd(Command::Cmp {
-                        op1: Register::Al.into(),
-                        op2: Register::Integer(0).into(),
-                    });
-                    self.asm.push_cmd(Command::Je(else_l.clone()));
-                    self.visit_stmt(&elif.expr, tree, semantic_metadata)?;
-                }
-                if let Some(else_stmt) = else_statement {
-                    self.asm.push_cmd(Command::Jmp(end_l.clone()));
-                    self.asm.label(&else_l)?;
-                    self.visit_stmt(else_stmt, tree, semantic_metadata)?;
-                    self.asm.label(&end_l)?;
-                } else {
-                    self.asm.label(&else_l)?;
-                }
-                Ok(())
-            }
-            Stmt::While { cond, body } => {
-                let loop_l = self.next_l("while");
-                let loop_end_l = self.next_l("endwhile");
-                self.enter_loop(&loop_l, &loop_end_l);
-                self.asm.label(&loop_l)?;
-                self.visit_expr(cond, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                self.asm.push_cmd(Command::Cmp {
-                    op1: Register::Al.into(),
-                    op2: Register::Integer(0).into(),
-                });
-                self.asm.push_cmd(Command::Je(loop_end_l.clone()));
-                self.visit_stmt(body, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Jmp(loop_l));
-                self.asm.label(&loop_end_l)?;
-                self.exit_loop();
-                Ok(())
-            }
+            } => self.visit_if(
+                cond,
+                elifs,
+                else_statement.as_ref(),
+                tree,
+                semantic_metadata,
+            ),
+            Stmt::While { cond, body } => self.visit_while(cond, body, tree, semantic_metadata),
             Stmt::For {
                 var,
                 init,
                 end,
                 body,
-            } => {
-                let var_mem =
-                    Operand::Memory(self.get_variable_memory_address(var, tree, semantic_metadata));
-                let var_size = semantic_metadata
-                    .get_expr_type(var)
-                    .unwrap()
-                    .get_size(semantic_metadata);
-                self.visit_expr(init, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                self.asm.push_cmd(Command::Dec(Register::Rax));
-                self.asm.push_cmd(Command::Mov {
-                    dst: var_mem.clone(),
-                    src: Register::Rax.to_size(var_size).into(),
-                });
-                self.visit_expr(end, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                self.asm.push_cmd(Command::Push(Register::Rax.into()));
-                let l1 = self.next_l("for_body");
-                let l2 = self.next_l("endfor");
-                self.enter_loop(&l1, &l2);
-                self.asm.label(&l1)?;
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rax.to_size(var_size).into(),
-                    src: var_mem.clone().into(),
-                });
-                self.asm.push_cmd(Command::Inc(Register::Rax.into()));
-                self.asm.push_cmd(Command::Mov {
-                    dst: var_mem.into(),
-                    src: Register::Rax.to_size(var_size).into(),
-                });
-                self.asm.push_cmd(Command::Cmp {
-                    op1: Register::Rax.into(),
-                    op2: StackMemory::new(Register::Rsp, Size::S64bit).into(),
-                });
-                self.asm.push_cmd(Command::Jg(l2.clone()));
-                self.visit_stmt(body, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Jmp(l1.clone()));
-                self.asm.label(&l2)?;
-                self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
-                self.exit_loop();
-                Ok(())
-            }
-            Stmt::Break => {
-                let end_l = self
-                    .loop_exit_labels
-                    .last()
-                    .expect("break should not be outside of the loop");
-                self.asm.push_cmd(Command::Jmp(end_l.clone()));
-                Ok(())
-            }
-            Stmt::Continue => {
-                let start_l = self
-                    .loop_start_labels
-                    .last()
-                    .expect("continue should be within a loop");
-                self.asm.push_cmd(Command::Jmp(start_l.clone()));
-                Ok(())
-            }
-            Stmt::Exit(val) => {
-                if let Some(expr) = val {
-                    self.visit_expr(expr, tree, semantic_metadata)?;
-                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                } else {
-                    self.asm.push_cmd(Command::Xor {
-                        dst: Register::Eax,
-                        src: Register::Eax,
-                    });
-                }
-                self.asm.push_cmd(Command::Leave);
-                self.asm.push_cmd(Command::Ret);
-                Ok(())
-            }
-            _ => todo!(),
+            } => self.visit_for(var, init, end, body, tree, semantic_metadata),
+            Stmt::Break => Ok(self.visit_break()),
+            Stmt::Continue => Ok(self.visit_continue()),
+            Stmt::Exit(val) => self.visit_exit(val.as_ref(), tree, semantic_metadata),
         }
     }
 
+    #[inline]
+    fn visit_assign(
+        &mut self,
+        left: &ExprRef,
+        right: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        let var_name = tree.get_var_name(left).unwrap();
+        let var_size = semantic_metadata
+            .get_expr_type(left)
+            .unwrap()
+            .get_size(semantic_metadata);
+        let pass_mode = semantic_metadata.get_var_pass_mode(left).unwrap();
+        self.visit_expr(right, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        match pass_mode {
+            VarPassMode::Val => {
+                let source_op = match semantic_metadata.var_types.get(left).unwrap() {
+                    VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
+                    VarLocality::Global => GlobalMemory {
+                        name: var_name,
+                        size: var_size,
+                    }
+                    .into(),
+                };
+                self.asm.push_cmd(Command::Mov {
+                    dst: source_op,
+                    src: Register::Rax.to_size(var_size).into(),
+                });
+            }
+            VarPassMode::Ref => {
+                let var_addr = self.call_stack.lookup_var_addr(var_name);
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbx.into(),
+                    src: var_addr.into(),
+                });
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbx.as_addr(var_size).into(),
+                    src: Register::Rax.to_size(var_size).into(),
+                });
+            }
+        };
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_if(
+        &mut self,
+        cond: &Condition,
+        elifs: &[Condition],
+        else_statement: Option<&StmtRef>,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        self.visit_expr(&cond.cond, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        self.asm.push_cmd(Command::Cmp {
+            op1: Register::Al.into(),
+            op2: Register::Integer(0).into(),
+        });
+        let mut else_l = self.next_l("else");
+        let end_l = self.next_l("endif");
+        self.asm.push_cmd(Command::Je(else_l.clone()));
+        self.visit_stmt(&cond.expr, tree, semantic_metadata)?;
+        let mut elifs = elifs.iter();
+        while let Some(elif) = elifs.next() {
+            self.asm.push_cmd(Command::Jmp(end_l.clone()));
+            self.asm.label(&else_l)?;
+            else_l = self.next_l("else");
+            self.visit_expr(&elif.cond, tree, semantic_metadata)?;
+            self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+            self.asm.push_cmd(Command::Cmp {
+                op1: Register::Al.into(),
+                op2: Register::Integer(0).into(),
+            });
+            self.asm.push_cmd(Command::Je(else_l.clone()));
+            self.visit_stmt(&elif.expr, tree, semantic_metadata)?;
+        }
+        if let Some(else_stmt) = else_statement {
+            self.asm.push_cmd(Command::Jmp(end_l.clone()));
+            self.asm.label(&else_l)?;
+            self.visit_stmt(else_stmt, tree, semantic_metadata)?;
+            self.asm.label(&end_l)?;
+        } else {
+            self.asm.label(&else_l)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_while(
+        &mut self,
+        cond: &ExprRef,
+        body: &StmtRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        let loop_l = self.next_l("while");
+        let loop_end_l = self.next_l("endwhile");
+        self.enter_loop(&loop_l, &loop_end_l);
+        self.asm.label(&loop_l)?;
+        self.visit_expr(cond, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        self.asm.push_cmd(Command::Cmp {
+            op1: Register::Al.into(),
+            op2: Register::Integer(0).into(),
+        });
+        self.asm.push_cmd(Command::Je(loop_end_l.clone()));
+        self.visit_stmt(body, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Jmp(loop_l));
+        self.asm.label(&loop_end_l)?;
+        self.exit_loop();
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_for(
+        &mut self,
+        var: &ExprRef,
+        init: &ExprRef,
+        end: &ExprRef,
+        body: &StmtRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        let var_mem =
+            Operand::Memory(self.get_variable_memory_address(var, tree, semantic_metadata));
+        let var_size = semantic_metadata
+            .get_expr_type(var)
+            .unwrap()
+            .get_size(semantic_metadata);
+        self.visit_expr(init, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        self.asm.push_cmd(Command::Dec(Register::Rax));
+        self.asm.push_cmd(Command::Mov {
+            dst: var_mem.clone(),
+            src: Register::Rax.to_size(var_size).into(),
+        });
+        self.visit_expr(end, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        self.asm.push_cmd(Command::Push(Register::Rax.into()));
+        let l1 = self.next_l("for_body");
+        let l2 = self.next_l("endfor");
+        self.enter_loop(&l1, &l2);
+        self.asm.label(&l1)?;
+        self.asm.push_cmd(Command::Mov {
+            dst: Register::Rax.to_size(var_size).into(),
+            src: var_mem.clone().into(),
+        });
+        self.asm.push_cmd(Command::Inc(Register::Rax.into()));
+        self.asm.push_cmd(Command::Mov {
+            dst: var_mem.into(),
+            src: Register::Rax.to_size(var_size).into(),
+        });
+        self.asm.push_cmd(Command::Cmp {
+            op1: Register::Rax.into(),
+            op2: StackMemory::new(Register::Rsp, Size::S64bit).into(),
+        });
+        self.asm.push_cmd(Command::Jg(l2.clone()));
+        self.visit_stmt(body, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Jmp(l1.clone()));
+        self.asm.label(&l2)?;
+        self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
+        self.exit_loop();
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_break(&mut self) {
+        let end_l = self
+            .loop_exit_labels
+            .last()
+            .expect("break should not be outside of the loop");
+        self.asm.push_cmd(Command::Jmp(end_l.clone()));
+    }
+
+    #[inline]
+    fn visit_continue(&mut self) {
+        let start_l = self
+            .loop_start_labels
+            .last()
+            .expect("continue should be within a loop");
+        self.asm.push_cmd(Command::Jmp(start_l.clone()));
+    }
+
+    #[inline]
+    fn visit_exit(
+        &mut self,
+        val: Option<&ExprRef>,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        if let Some(expr) = val {
+            self.visit_expr(expr, tree, semantic_metadata)?;
+            self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        } else {
+            self.asm.push_cmd(Command::Xor {
+                dst: Register::Eax,
+                src: Register::Eax,
+            });
+        }
+        self.asm.push_cmd(Command::Leave);
+        self.asm.push_cmd(Command::Ret);
+        Ok(())
+    }
+
+    fn visit_expr(
+        &mut self,
+        expr: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        match tree.expr_pool.get(*expr) {
+            Expr::LiteralInteger(i) => self.visit_literal_integer(i),
+            Expr::LiteralBool(b) => self.visit_literal_bool(b),
+            Expr::Var { .. } => self.visit_var(expr, semantic_metadata)?,
+            Expr::UnaryOp { op, expr } => self.visit_unary_op(op, expr, tree, semantic_metadata)?,
+            Expr::BinOp { op, left, right } => {
+                self.visit_bin_op(op, left, right, tree, semantic_metadata)?
+            }
+            Expr::Call { .. } => self.visit_call(expr, tree, semantic_metadata)?,
+            _ => todo!(),
+        };
+        self.asm.push_cmd(Command::Push(Register::Rax.into()));
+        Ok(())
+    }
+
+    #[inline]
     fn visit_call(
         &mut self,
         call: &ExprRef,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match tree.expr_pool.get(*call) {
             Expr::Call { name, args } => {
                 let func_name = name.lexem(tree.source_code);
@@ -1330,173 +1401,188 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
     }
 
-    fn visit_expr(
-        &mut self,
-        expr: &ExprRef,
-        tree: &'a Tree,
-        semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<(), Error> {
-        match tree.expr_pool.get(*expr) {
-            Expr::Call { .. } => {
-                self.visit_call(expr, tree, semantic_metadata)?;
-            }
-            Expr::Var { .. } => match semantic_metadata.get_var_symbol(expr).unwrap() {
-                VarSymbol::Var {
-                    name,
-                    pass_mode,
-                    type_symbol,
-                } => {
-                    let var_size = semantic_metadata
-                        .types
-                        .get(*type_symbol)
-                        .get_size(semantic_metadata);
-                    match pass_mode {
-                        VarPassMode::Val => {
-                            let source_op = match semantic_metadata.var_types.get(expr).unwrap() {
-                                VarLocality::Local => self.call_stack.lookup_var_mem(name).into(),
-                                VarLocality::Global => GlobalMemory {
-                                    name,
-                                    size: var_size,
-                                }
-                                .into(),
-                            };
-                            self.asm.push_cmd(Command::Mov {
-                                dst: Register::Rax.to_size(var_size).into(),
-                                src: source_op,
-                            });
-                        }
-                        VarPassMode::Ref => {
-                            let var_mem = self.call_stack.lookup_var_addr(name);
-                            self.asm.push_cmd(Command::Mov {
-                                dst: Register::Rax.into(),
-                                src: var_mem.into(),
-                            });
-                            self.asm.push_cmd(Command::Mov {
-                                dst: Register::Rax.to_size(var_size).into(),
-                                src: Register::Rax.as_addr(var_size).into(),
-                            });
-                        }
-                    };
-                }
-                VarSymbol::Const {
-                    value,
-                    type_symbol: _,
-                } => match value {
-                    ConstValue::Integer(i) => {
-                        self.asm.push_cmd(Command::Mov {
-                            dst: Register::Rax.into(),
-                            src: Register::Integer(*i).into(),
-                        });
-                    }
-                    ConstValue::Boolean(b) => {
-                        let val = match b {
-                            true => 1,
-                            false => 0,
+    #[inline]
+    fn visit_var(&mut self, expr: &ExprRef, semantic_metadata: &'a SemanticMetadata) -> Result<()> {
+        match semantic_metadata.get_var_symbol(expr).unwrap() {
+            VarSymbol::Var {
+                name,
+                pass_mode,
+                type_symbol,
+            } => {
+                let var_size = semantic_metadata
+                    .types
+                    .get(*type_symbol)
+                    .get_size(semantic_metadata);
+                match pass_mode {
+                    VarPassMode::Val => {
+                        let source_op = match semantic_metadata.var_types.get(expr).unwrap() {
+                            VarLocality::Local => self.call_stack.lookup_var_mem(name).into(),
+                            VarLocality::Global => GlobalMemory {
+                                name,
+                                size: var_size,
+                            }
+                            .into(),
                         };
                         self.asm.push_cmd(Command::Mov {
-                            dst: Register::Al.into(),
-                            src: Register::Integer(val).into(),
+                            dst: Register::Rax.to_size(var_size).into(),
+                            src: source_op,
                         });
                     }
-                    _ => todo!(),
-                },
-            },
-            Expr::LiteralInteger(i) => self.asm.push_cmd(Command::Mov {
-                dst: Register::Rax.into(),
-                src: Register::Integer(*i).into(),
-            }),
-            Expr::LiteralBool(b) => {
-                let val = match b {
-                    true => 1,
-                    false => 0,
+                    VarPassMode::Ref => {
+                        let var_mem = self.call_stack.lookup_var_addr(name);
+                        self.asm.push_cmd(Command::Mov {
+                            dst: Register::Rax.into(),
+                            src: var_mem.into(),
+                        });
+                        self.asm.push_cmd(Command::Mov {
+                            dst: Register::Rax.to_size(var_size).into(),
+                            src: Register::Rax.as_addr(var_size).into(),
+                        });
+                    }
                 };
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rax.into(),
-                    src: Register::Integer(val).into(),
-                })
             }
-            Expr::UnaryOp { op, expr } => {
-                self.visit_expr(expr, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                match op {
-                    TokenType::Plus => {}
-                    TokenType::Minus => {
-                        self.asm.push_cmd(Command::Neg(Register::Rax));
-                    }
-                    TokenType::Not => {
-                        self.asm.push_cmd(Command::Xor {
-                            dst: Register::Al,
-                            src: Register::Integer(1),
-                        });
-                        self.asm.push_cmd(Command::Movzx {
-                            dst: Register::Rax,
-                            src: Register::Al.into(),
-                        });
-                    }
-                    _ => todo!(),
+            VarSymbol::Const {
+                value,
+                type_symbol: _,
+            } => match value {
+                ConstValue::Integer(i) => {
+                    self.asm.push_cmd(Command::Mov {
+                        dst: Register::Rax.into(),
+                        src: Register::Integer(*i).into(),
+                    });
                 }
-            }
-            Expr::BinOp { op, left, right } => {
-                self.visit_expr(left, tree, semantic_metadata)?;
-                self.visit_expr(right, tree, semantic_metadata)?;
-                let left_size = semantic_metadata
-                    .get_expr_type(left)
-                    .unwrap()
-                    .get_size(semantic_metadata);
-                self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                match op {
-                    TokenType::Plus => {
-                        self.asm.push_cmd(Command::Add {
-                            dst: Register::Rax.to_size(left_size),
-                            src: Register::Rbx.to_size(left_size),
-                        });
-                    }
-                    TokenType::Minus => {
-                        self.asm.push_cmd(Command::Sub {
-                            dst: Register::Rax.to_size(left_size),
-                            src: Register::Rbx.to_size(left_size),
-                        });
-                    }
-                    TokenType::Mul => {
-                        self.asm.push_cmd(Command::Imul {
-                            dst: Register::Rax.to_size(left_size),
-                            src: Register::Rbx.to_size(left_size),
-                        });
-                    }
-                    TokenType::IntegerDiv => {
-                        self.asm.push_cmd(left_size.sign_extention().unwrap());
-                        self.asm
-                            .push_cmd(Command::IDiv(Register::Rbx.to_size(left_size)));
-                    }
-                    TokenType::And => {
-                        self.asm.push_cmd(Command::And {
-                            dst: Register::Al,
-                            src: Register::Bl,
-                        });
-                    }
-                    TokenType::Or => {
-                        self.asm.push_cmd(Command::Or {
-                            dst: Register::Al,
-                            src: Register::Bl,
-                        });
-                    }
-                    TokenType::Equal
-                    | TokenType::NotEqual
-                    | TokenType::GreaterEqual
-                    | TokenType::GreaterThen
-                    | TokenType::LessThen
-                    | TokenType::LessEqual => self.visit_comparison(&op)?,
-                    _ => unreachable!(),
+                ConstValue::Boolean(b) => {
+                    let val = match b {
+                        true => 1,
+                        false => 0,
+                    };
+                    self.asm.push_cmd(Command::Mov {
+                        dst: Register::Al.into(),
+                        src: Register::Integer(val).into(),
+                    });
                 }
-            }
-            _ => todo!(),
-        };
-        self.asm.push_cmd(Command::Push(Register::Rax.into()));
+                _ => todo!(),
+            },
+        }
         Ok(())
     }
 
-    fn visit_comparison(&mut self, cmp_token: &TokenType) -> Result<(), Error> {
+    #[inline]
+    fn visit_literal_integer(&mut self, i: &i32) {
+        self.asm.push_cmd(Command::Mov {
+            dst: Register::Rax.into(),
+            src: Register::Integer(*i).into(),
+        })
+    }
+
+    #[inline]
+    fn visit_literal_bool(&mut self, b: &bool) {
+        let val = match b {
+            true => 1,
+            false => 0,
+        };
+        self.asm.push_cmd(Command::Mov {
+            dst: Register::Rax.into(),
+            src: Register::Integer(val).into(),
+        });
+    }
+
+    #[inline]
+    fn visit_unary_op(
+        &mut self,
+        op: &TokenType,
+        expr: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        self.visit_expr(expr, tree, semantic_metadata)?;
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        match op {
+            TokenType::Plus => {}
+            TokenType::Minus => {
+                self.asm.push_cmd(Command::Neg(Register::Rax));
+            }
+            TokenType::Not => {
+                self.asm.push_cmd(Command::Xor {
+                    dst: Register::Al,
+                    src: Register::Integer(1),
+                });
+                self.asm.push_cmd(Command::Movzx {
+                    dst: Register::Rax,
+                    src: Register::Al.into(),
+                });
+            }
+            _ => todo!(),
+        };
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_bin_op(
+        &mut self,
+        op: &TokenType,
+        left: &ExprRef,
+        right: &ExprRef,
+        tree: &'a Tree,
+        semantic_metadata: &'a SemanticMetadata,
+    ) -> Result<()> {
+        self.visit_expr(left, tree, semantic_metadata)?;
+        self.visit_expr(right, tree, semantic_metadata)?;
+        let left_size = semantic_metadata
+            .get_expr_type(left)
+            .unwrap()
+            .get_size(semantic_metadata);
+        self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
+        self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        match op {
+            TokenType::Plus => {
+                self.asm.push_cmd(Command::Add {
+                    dst: Register::Rax.to_size(left_size),
+                    src: Register::Rbx.to_size(left_size),
+                });
+            }
+            TokenType::Minus => {
+                self.asm.push_cmd(Command::Sub {
+                    dst: Register::Rax.to_size(left_size),
+                    src: Register::Rbx.to_size(left_size),
+                });
+            }
+            TokenType::Mul => {
+                self.asm.push_cmd(Command::Imul {
+                    dst: Register::Rax.to_size(left_size),
+                    src: Register::Rbx.to_size(left_size),
+                });
+            }
+            TokenType::IntegerDiv => {
+                self.asm.push_cmd(left_size.sign_extention().unwrap());
+                self.asm
+                    .push_cmd(Command::IDiv(Register::Rbx.to_size(left_size)));
+            }
+            TokenType::And => {
+                self.asm.push_cmd(Command::And {
+                    dst: Register::Al,
+                    src: Register::Bl,
+                });
+            }
+            TokenType::Or => {
+                self.asm.push_cmd(Command::Or {
+                    dst: Register::Al,
+                    src: Register::Bl,
+                });
+            }
+            TokenType::Equal
+            | TokenType::NotEqual
+            | TokenType::GreaterEqual
+            | TokenType::GreaterThen
+            | TokenType::LessThen
+            | TokenType::LessEqual => self.visit_comparison(&op)?,
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn visit_comparison(&mut self, cmp_token: &TokenType) -> Result<()> {
         self.asm.push_cmd(Command::Cmp {
             op1: Register::Rax.into(),
             op2: Register::Rbx.into(),

@@ -5,6 +5,8 @@ use itertools::Itertools;
 
 use crate::utils::Pos;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(ErrorCode, Debug, PartialEq)]
 pub enum ErrorCode {
     #[error_code(100)]
@@ -126,7 +128,7 @@ impl Errors {
         self.0.len()
     }
 
-    pub fn add(self, other: Result<(), Error>) -> Errors {
+    pub fn add(self, other: Result<()>) -> Errors {
         match other {
             Err(Error::Errors(errs)) => Errors(
                 self.0
@@ -139,7 +141,7 @@ impl Errors {
         }
     }
 
-    pub fn result<R>(self, res: R) -> Result<R, Error> {
+    pub fn result<R>(self, res: R) -> Result<R> {
         match self.0.len() {
             0 => Ok(res),
             1 => Err(self.0.into_iter().last().unwrap()),
@@ -148,8 +150,8 @@ impl Errors {
     }
 }
 
-impl Into<Result<(), Error>> for Errors {
-    fn into(self) -> Result<(), Error> {
+impl Into<Result<()>> for Errors {
+    fn into(self) -> Result<()> {
         match self.0.len() {
             0 => Ok(()),
             1 => Err(self.0.into_iter().last().unwrap()),
