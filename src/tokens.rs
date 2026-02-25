@@ -52,11 +52,13 @@ impl Hash for Token {
 #[derive(Debug, Clone, Copy)]
 pub enum TokenType {
     IntegerConst(i32),
+    Int64Const(i64),
     RealConst(f32),
     CharConst(char),
     BooleanConst(bool),
     Program,
     Integer,
+    Int64,
     Real,
     Boolean,
     Char,
@@ -133,6 +135,7 @@ impl TokenType {
         let mut keywords = HashMap::new();
         keywords.insert("PROGRAM".to_string(), TokenType::Program);
         keywords.insert("INTEGER".to_string(), TokenType::Integer);
+        keywords.insert("INT64".to_string(), TokenType::Int64);
         keywords.insert("REAL".to_string(), TokenType::Real);
         keywords.insert("BOOLEAN".to_string(), TokenType::Boolean);
         keywords.insert("CHAR".to_string(), TokenType::Char);

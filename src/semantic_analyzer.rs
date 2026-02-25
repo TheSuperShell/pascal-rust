@@ -324,6 +324,7 @@ impl SemanticAnalyzer {
             Expr::LiteralBool(_) => Ok::<TypeSymbol, Error>(TypeSymbol::Boolean),
             Expr::LiteralChar(_) => Ok(TypeSymbol::Char),
             Expr::LiteralInteger(_) => Ok(TypeSymbol::Integer),
+            Expr::LiteralInt64(_) => Ok(TypeSymbol::Int64),
             Expr::LiteralReal(_) => Ok(TypeSymbol::Real),
             Expr::LiteralString(_) => Ok(TypeSymbol::String),
             Expr::Var { name } => {
@@ -358,10 +359,14 @@ impl SemanticAnalyzer {
                     TokenType::Minus | TokenType::RealDiv | TokenType::Mul => {
                         match (&left_type, &right_type) {
                             (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
+                            (TypeSymbol::Int64, TypeSymbol::Int64) => Ok(TypeSymbol::Int64),
+                            (TypeSymbol::Int64, TypeSymbol::Integer) => Ok(TypeSymbol::Int64),
+                            (TypeSymbol::Integer, TypeSymbol::Int64) => Ok(TypeSymbol::Integer),
                             (
-                                TypeSymbol::Real | TypeSymbol::Integer,
-                                TypeSymbol::Real | TypeSymbol::Integer,
+                                TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
+                                TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
                             ) => Ok(TypeSymbol::Real),
+
                             _ => Err(Error::SemanticError {
                                 msg: format!(
                                     "operator {:?} is not supported for {:?} and {:?}",
@@ -376,6 +381,10 @@ impl SemanticAnalyzer {
                         (TypeSymbol::Integer | TypeSymbol::Real, TypeSymbol::Integer) => {
                             Ok(TypeSymbol::Integer)
                         }
+                        (
+                            TypeSymbol::Int64 | TypeSymbol::Real | TypeSymbol::Integer,
+                            TypeSymbol::Int64,
+                        ) => Ok(TypeSymbol::Int64),
                         _ => Err(Error::SemanticError {
                             msg: format!(
                                 "integer division is not supported for {:?} and {:?}",
@@ -390,9 +399,12 @@ impl SemanticAnalyzer {
                             Ok(TypeSymbol::String)
                         }
                         (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
+                        (TypeSymbol::Int64, TypeSymbol::Int64) => Ok(TypeSymbol::Int64),
+                        (TypeSymbol::Int64, TypeSymbol::Integer) => Ok(TypeSymbol::Int64),
+                        (TypeSymbol::Integer, TypeSymbol::Int64) => Ok(TypeSymbol::Integer),
                         (
-                            TypeSymbol::Real | TypeSymbol::Integer,
-                            TypeSymbol::Real | TypeSymbol::Integer,
+                            TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
+                            TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
                         ) => Ok(TypeSymbol::Real),
                         _ => Err(Error::SemanticError {
                             msg: format!(
@@ -408,8 +420,8 @@ impl SemanticAnalyzer {
                     | TokenType::LessEqual
                     | TokenType::LessThen => match (left_type, right_type) {
                         (
-                            TypeSymbol::Integer | TypeSymbol::Real,
-                            TypeSymbol::Integer | TypeSymbol::Real,
+                            TypeSymbol::Integer | TypeSymbol::Real | TypeSymbol::Int64,
+                            TypeSymbol::Integer | TypeSymbol::Real | TypeSymbol::Int64,
                         ) => Ok(TypeSymbol::Boolean),
                         _ => Err(Error::SemanticError {
                             msg: format!(
@@ -443,6 +455,9 @@ impl SemanticAnalyzer {
                     (TokenType::Not, TypeSymbol::Boolean) => Ok(TypeSymbol::Boolean),
                     (TokenType::Minus | TokenType::Plus, TypeSymbol::Integer) => {
                         Ok(TypeSymbol::Integer)
+                    }
+                    (TokenType::Minus | TokenType::Plus, TypeSymbol::Int64) => {
+                        Ok(TypeSymbol::Int64)
                     }
                     (TokenType::Minus | TokenType::Plus, TypeSymbol::Real) => Ok(TypeSymbol::Real),
                     (_, _) => Err(Error::SemanticError {
@@ -540,6 +555,7 @@ impl SemanticAnalyzer {
         let pos = tree.node_pos(NodeRef::TypeRef(node));
         let type_symbol = match tree.type_pool.get(node) {
             Type::Integer => Ok::<TypeSymbol, Error>(TypeSymbol::Integer),
+            Type::Int64 => Ok(TypeSymbol::Int64),
             Type::Real => Ok(TypeSymbol::Real),
             Type::Boolean => Ok(TypeSymbol::Boolean),
             Type::Char => Ok(TypeSymbol::Char),
@@ -662,6 +678,7 @@ impl SemanticAnalyzer {
                 let literal_expr = tree.expr_pool.get(*literal);
                 let const_type = match literal_expr {
                     Expr::LiteralInteger(v) => ConstValue::Integer(*v),
+                    Expr::LiteralInt64(v) => ConstValue::Int64(*v),
                     Expr::LiteralBool(v) => ConstValue::Boolean(*v),
                     Expr::LiteralReal(v) => ConstValue::Real(*v),
                     Expr::LiteralString(v) => ConstValue::String(v.lexem(tree.source_code).into()),
@@ -829,11 +846,11 @@ impl SemanticAnalyzer {
                     let default_type_ref = self.visit_expr(*expr, tree)?;
                     let default_type = self.semantic_metadata.types.get(default_type_ref);
                     let type_symbol = self.semantic_metadata.types.get(type_symbol_ref);
-                    if !TypeSymbol::eq(&self.semantic_metadata.types, &default_type, &type_symbol) {
+                    if !assinable(&self.semantic_metadata.types, type_symbol, default_type) {
                         return Err(Error::SemanticError {
                             msg: format!(
-                                "default value should have the type {:?}, but it is {:?}",
-                                type_symbol, default_type
+                                "default value have the type {:?} and is not assinable to {:?}",
+                                default_type, type_symbol
                             ),
                             pos: tree.node_pos(NodeRef::ExprRef(*expr)),
                             error_code: ErrorCode::IncorrectType,
@@ -1077,11 +1094,13 @@ fn assinable(
     if TypeSymbol::eq(types, left, right) {
         return true;
     }
-    match (left, right) {
-        (TypeSymbol::Real, TypeSymbol::Integer) => true,
-        (TypeSymbol::String, TypeSymbol::Char) => true,
-        _ => false,
-    }
+    matches!(
+        (left, right),
+        (TypeSymbol::Real, TypeSymbol::Integer)
+            | (TypeSymbol::String, TypeSymbol::Char)
+            | (TypeSymbol::Int64, TypeSymbol::Integer)
+            | (TypeSymbol::Integer, TypeSymbol::Int64)
+    )
 }
 
 #[cfg(test)]
@@ -1192,6 +1211,12 @@ mod tests {
         },
         test_enum -> {
 
+        },
+        test_bin_op_integral -> {
+            a1: TypeSymbol::Int64,
+            a2: TypeSymbol::Int64,
+            b1: TypeSymbol::Integer,
+            p: TypeSymbol::Int64
         },
     }
 

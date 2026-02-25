@@ -20,6 +20,7 @@ define_ref!(CallableSymbolRef);
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeSymbol {
     Integer,
+    Int64,
     Real,
     Boolean,
     String,
@@ -39,6 +40,7 @@ impl TypeSymbol {
     pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Size {
         match self {
             Self::Integer => Size::S32bit,
+            Self::Int64 => Size::S64bit,
             Self::Real => Size::S64bit,
             Self::Boolean => Size::S8bit,
             Self::Char => Size::S8bit,
@@ -54,12 +56,12 @@ impl TypeSymbol {
     pub fn is_ordinal(&self) -> bool {
         matches!(
             self,
-            Self::Integer | Self::Char | Self::Boolean | Self::Enum(_)
+            Self::Integer | Self::Int64 | Self::Char | Self::Boolean | Self::Enum(_)
         )
     }
     pub fn oridnal_value(&self, index: i32) -> Value {
         match self {
-            TypeSymbol::Integer => Value::Integer(index),
+            TypeSymbol::Integer | TypeSymbol::Int64 => Value::Integer(index),
             TypeSymbol::Char => Value::Char(char::from_u32(index as u32).unwrap()),
             TypeSymbol::Boolean => Value::Boolean(index != 0),
             TypeSymbol::Enum(_) => Value::Integer(index),
@@ -75,6 +77,7 @@ impl TypeSymbol {
                 .ordinal_rank(value, semantic_metadata),
             (Self::Enum(_), &Value::Integer(i)) => i,
             (Self::Integer, &Value::Integer(i)) => i,
+            (Self::Int64, &Value::Int64(i)) => i as i32,
             (Self::Char, &Value::Char(c)) => c as i32,
             (Self::Boolean, &Value::Boolean(b)) => b as i32,
             _ => unreachable!("incorrect ordinal invokation: {:?} <> {:?}", self, value),
@@ -147,6 +150,7 @@ impl TypeSymbol {
             TypeSymbol::Empty => "Empty".into(),
             TypeSymbol::Enum(..) => "Enum".into(),
             TypeSymbol::Integer => "Integer".into(),
+            TypeSymbol::Int64 => "Int64".into(),
             TypeSymbol::Range(value_type) => format!(
                 "Range of {}",
                 semantic_metadata
@@ -164,6 +168,7 @@ impl TypeSymbol {
 #[derive(Debug, Clone)]
 pub enum ConstValue {
     Integer(i32),
+    Int64(i64),
     Real(f32),
     String(String),
     Char(char),
@@ -173,6 +178,7 @@ pub enum ConstValue {
 impl Into<Value> for ConstValue {
     fn into(self) -> Value {
         match self {
+            ConstValue::Int64(i) => Value::Int64(i),
             ConstValue::Integer(i) => Value::Integer(i),
             ConstValue::Boolean(b) => Value::Boolean(b),
             ConstValue::Char(c) => Value::Char(c),

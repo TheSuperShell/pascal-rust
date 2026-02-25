@@ -1,8 +1,6 @@
-program compiled;
+program n;
     var a: int64 = 100;
     var b: integer = 10;
 begin
-    a := b;
-    b := a;
-    writeln(b);
+    a{#a1} := ({#p}a{#a2} + b{#b1});
 end.

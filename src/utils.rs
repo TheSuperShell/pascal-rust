@@ -164,7 +164,7 @@ macro_rules! define_ref {
 
 pub(crate) use define_ref;
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 #[allow(dead_code)]
 pub enum Size {
     S8bit,
@@ -174,4 +174,32 @@ pub enum Size {
     S128bit,
     Null,
     Unkown,
+}
+
+impl Size {
+    pub fn to_bytes(&self) -> usize {
+        match self {
+            Self::Null => 0,
+            Self::Unkown => 8,
+            Self::S8bit => 1,
+            Self::S16bit => 2,
+            Self::S32bit => 4,
+            Self::S64bit => 8,
+            Self::S128bit => 16,
+        }
+    }
+}
+
+impl Ord for Size {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let left = self.to_bytes();
+        let right = other.to_bytes();
+        left.cmp(&right)
+    }
+}
+
+impl PartialOrd for Size {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }

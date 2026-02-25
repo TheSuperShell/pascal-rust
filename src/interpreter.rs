@@ -34,6 +34,7 @@ pub enum Value {
     Array(Vec<Option<Box<Value>>>),
     String(String),
     Integer(i32),
+    Int64(i64),
     Real(f32),
     Char(char),
     Boolean(bool),
@@ -45,6 +46,7 @@ impl ToString for Value {
             Self::Boolean(b) => b.to_string(),
             Self::Char(c) => c.to_string(),
             Self::Integer(i) => i.to_string(),
+            Self::Int64(i) => i.to_string(),
             Self::Real(r) => r.to_string(),
             Self::String(s) => s.into(),
             Self::Array(vals) => format!(
@@ -510,6 +512,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             Expr::LiteralBool(b) => Ok(Value::Boolean(*b)),
             Expr::LiteralChar(c) => Ok(Value::Char(*c)),
             Expr::LiteralInteger(i) => Ok(Value::Integer(*i)),
+            Expr::LiteralInt64(i) => Ok(Value::Int64(*i)),
             Expr::LiteralReal(r) => Ok(Value::Real(*r)),
             Expr::LiteralString(s) => Ok(Value::String(s.lexem(tree.source_code).into())),
             Expr::Var { name: _ } => {

@@ -213,16 +213,15 @@ impl<'a> Lexer<'a> {
             || (self.peek().is_some() && !self.peek().unwrap().is_digit(10))
         {
             let len = (self.index - current_index) as u32;
-            return Token::new(
-                TokenType::IntegerConst(
-                    self.source_code[current_index..self.index]
-                        .parse()
-                        .expect("integer parting error, should not happen!"),
-                ),
-                current_index as u32,
-                len,
-                self.pos.shift(len),
-            );
+            let int_value: i64 = self.source_code[current_index..self.index]
+                .parse()
+                .expect("integer parsing error");
+            let token_type = if int_value > i32::MAX as i64 || int_value < i32::MIN as i64 {
+                TokenType::Int64Const(int_value)
+            } else {
+                TokenType::IntegerConst(int_value as i32)
+            };
+            return Token::new(token_type, current_index as u32, len, self.pos.shift(len));
         }
         self.advance();
         while let Some(c) = self.current_char

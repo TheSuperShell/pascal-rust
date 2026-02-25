@@ -176,17 +176,6 @@ impl Size {
             Self::S128bit => "reso",
         }
     }
-    fn to_bytes(&self) -> usize {
-        match self {
-            Self::Null => 0,
-            Self::Unkown => 8,
-            Self::S8bit => 1,
-            Self::S16bit => 2,
-            Self::S32bit => 4,
-            Self::S64bit => 8,
-            Self::S128bit => 16,
-        }
-    }
     fn sign_extention<'a>(&self) -> Option<Command<'a>> {
         match self {
             Self::S16bit => Some(Command::Cwd),
@@ -340,6 +329,10 @@ enum Command<'a> {
         src: Operand<'a>,
     },
     Movzx {
+        dst: Register<'a>,
+        src: Operand<'a>,
+    },
+    Movsx {
         dst: Register<'a>,
         src: Operand<'a>,
     },
@@ -509,6 +502,7 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Push(v) => writeln!(self.output, "push {}", v),
                 Command::Mov { dst, src } => writeln!(self.output, "mov {}, {}", dst, src),
                 Command::Movzx { dst, src } => writeln!(self.output, "movzx {}, {}", dst, src),
+                Command::Movsx { dst, src } => writeln!(self.output, "movsx {}, {}", dst, src),
                 Command::Add { dst, src } => writeln!(self.output, "add {}, {}", dst, src),
                 Command::Sub { dst, src } => writeln!(self.output, "sub {}, {}", dst, src),
                 Command::Imul { dst, src } => writeln!(self.output, "imul {}, {}", dst, src),
@@ -1063,8 +1057,12 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
         let var_name = tree.get_var_name(left).unwrap();
-        let var_size = semantic_metadata
+        let left_size = semantic_metadata
             .get_expr_type(left)
+            .unwrap()
+            .get_size(semantic_metadata);
+        let right_size = semantic_metadata
+            .get_expr_type(right)
             .unwrap()
             .get_size(semantic_metadata);
         let pass_mode = semantic_metadata.get_var_pass_mode(left).unwrap();
@@ -1076,14 +1074,25 @@ impl<'a, W: Write> Compiler<'a, W> {
                     VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
                     VarLocality::Global => GlobalMemory {
                         name: var_name,
-                        size: var_size,
+                        size: left_size,
                     }
                     .into(),
                 };
-                self.asm.push_cmd(Command::Mov {
-                    dst: source_op,
-                    src: Register::Rax.to_size(var_size).into(),
-                });
+                if left_size > right_size {
+                    self.asm.push_cmd(Command::Movsx {
+                        dst: Register::Rdx.to_size(left_size).into(),
+                        src: Register::Rax.to_size(right_size).into(),
+                    });
+                    self.asm.push_cmd(Command::Mov {
+                        dst: source_op,
+                        src: Register::Rdx.to_size(left_size).into(),
+                    });
+                } else {
+                    self.asm.push_cmd(Command::Mov {
+                        dst: source_op,
+                        src: Register::Rax.to_size(left_size).into(),
+                    });
+                }
             }
             VarPassMode::Ref => {
                 let var_addr = self.call_stack.lookup_var_addr(var_name);
@@ -1091,10 +1100,21 @@ impl<'a, W: Write> Compiler<'a, W> {
                     dst: Register::Rbx.into(),
                     src: var_addr.into(),
                 });
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbx.as_addr(var_size).into(),
-                    src: Register::Rax.to_size(var_size).into(),
-                });
+                if left_size > right_size {
+                    self.asm.push_cmd(Command::Movsx {
+                        dst: Register::Rdx.to_size(left_size).into(),
+                        src: Register::Rax.to_size(right_size).into(),
+                    });
+                    self.asm.push_cmd(Command::Mov {
+                        dst: Register::Rbx.as_addr(left_size).into(),
+                        src: Register::Rdx.to_size(left_size).into(),
+                    });
+                } else {
+                    self.asm.push_cmd(Command::Mov {
+                        dst: Register::Rbx.as_addr(left_size).into(),
+                        src: Register::Rax.to_size(left_size).into(),
+                    });
+                }
             }
         };
         Ok(())

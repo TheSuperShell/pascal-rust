@@ -35,6 +35,7 @@ pub enum Expr {
         name: Token,
     },
     LiteralInteger(i32),
+    LiteralInt64(i64),
     LiteralReal(f32),
     LiteralBool(bool),
     LiteralChar(char),
@@ -119,6 +120,7 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub enum Type {
     Integer,
+    Int64,
     Boolean,
     String,
     Char,
@@ -463,6 +465,11 @@ impl<'a> Parser<'a> {
                 let token = self.current_token;
                 self.current_token = self.lexer.next()?;
                 Ok(self.type_pool.alloc(Type::Integer, token.span()))
+            }
+            TokenType::Int64 => {
+                let token = self.current_token;
+                self.current_token = self.lexer.next()?;
+                Ok(self.type_pool.alloc(Type::Int64, token.span()))
             }
             TokenType::Real => {
                 let token = self.current_token;
@@ -973,6 +980,9 @@ impl<'a> Parser<'a> {
             TokenType::IntegerConst(v) => {
                 Ok(self.expr_pool.alloc(Expr::LiteralInteger(v), token.span()))
             }
+            TokenType::Int64Const(v) => {
+                Ok(self.expr_pool.alloc(Expr::LiteralInt64(v), token.span()))
+            }
             TokenType::RealConst(v) => Ok(self.expr_pool.alloc(Expr::LiteralReal(v), token.span())),
             TokenType::StringConst => Ok(self
                 .expr_pool
@@ -1105,6 +1115,7 @@ impl<'a> Tree<'a> {
     fn visit_type(&self, id: TypeRef, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match self.type_pool.get(id) {
+            Type::Int64 => format!("{indent}Type(Int64)"),
             Type::Integer => format!("{indent}Type(Integer)"),
             Type::Real => format!("{indent}Type(Real)"),
             Type::Boolean => format!("{indent}Type(Boolean)"),
@@ -1257,6 +1268,7 @@ impl<'a> Tree<'a> {
                 format!("{indent}BinOp\n{left_str}\n{indent}  {:?}\n{right_str}", op)
             }
             Expr::LiteralInteger(v) => format!("{indent}LitInt({v})"),
+            Expr::LiteralInt64(v) => format!("{indent}LitInt64({v})"),
             Expr::LiteralBool(v) => format!("{indent}LitBool({v})"),
             Expr::LiteralChar(v) => format!("{indent}LitChar('{v}')"),
             Expr::LiteralReal(v) => format!("{indent}LitReal({v})"),
@@ -1368,6 +1380,7 @@ mod tests {
         test_array_decl,
         test_enum,
         test_range,
+        test_types,
     }
 
     test_err! {
