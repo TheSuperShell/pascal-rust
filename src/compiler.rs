@@ -15,12 +15,14 @@ use std::{collections::HashSet, io::Write};
 enum DefaultValue {
     Integer(i32),
     Boolean(bool),
+    Int64(i64),
 }
 
 impl Display for DefaultValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             &Self::Integer(i) => write!(f, "{i}"),
+            &Self::Int64(i) => write!(f, "{i}"),
             &Self::Boolean(bool) => write!(
                 f,
                 "{}",
@@ -896,6 +898,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         match tree.expr_pool.get(*expr) {
             Expr::LiteralInteger(i) => DefaultValue::Integer(*i),
             Expr::LiteralBool(b) => DefaultValue::Boolean(*b),
+            Expr::LiteralInt64(i) => DefaultValue::Int64(*i),
             Expr::UnaryOp { op, expr } => {
                 let inner = self.visit_default(expr, tree);
                 match (op, inner) {
@@ -917,7 +920,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         debug!(target: "pascal::compiler", "Entering global scope");
         self.asm.directive("section .data")?;
-        self.asm.directive("fmt db \"%d\", 0")?;
+        self.asm.directive("fmt db \"%lld\", 0")?;
         self.asm.directive("newline db 10, 0")?;
         let global_vars = declarations
             .iter()
@@ -1383,7 +1386,17 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.asm.comment("call writeln")?;
                 for arg in args {
                     self.visit_expr(arg, tree, semantic_metadata)?;
+                    let arg_size = semantic_metadata
+                        .get_expr_type(arg)
+                        .unwrap()
+                        .get_size(semantic_metadata);
                     self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+                    if arg_size < Size::S64bit {
+                        self.asm.push_cmd(Command::Movsx {
+                            dst: Register::Rax,
+                            src: Register::Rax.to_size(arg_size).into(),
+                        });
+                    }
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rcx.into(),
                         src: Register::Variable("fmt").into(),
@@ -1546,37 +1559,53 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
-        self.visit_expr(left, tree, semantic_metadata)?;
-        self.visit_expr(right, tree, semantic_metadata)?;
         let left_size = semantic_metadata
-            .get_expr_type(left)
+            .get_expr_type(&left)
             .unwrap()
             .get_size(semantic_metadata);
+        let right_size = semantic_metadata
+            .get_expr_type(&right)
+            .unwrap()
+            .get_size(semantic_metadata);
+        let expr_size = right_size.max(left_size);
+        self.visit_expr(&left, tree, semantic_metadata)?;
+        self.visit_expr(&right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
+        if left_size > right_size {
+            self.asm.push_cmd(Command::Movsx {
+                dst: Register::Rbx.to_size(expr_size).into(),
+                src: Register::Rbx.to_size(right_size).into(),
+            });
+        } else {
+            self.asm.push_cmd(Command::Movsx {
+                dst: Register::Rax.to_size(expr_size).into(),
+                src: Register::Rax.to_size(left_size).into(),
+            });
+        }
         match op {
             TokenType::Plus => {
                 self.asm.push_cmd(Command::Add {
-                    dst: Register::Rax.to_size(left_size),
-                    src: Register::Rbx.to_size(left_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::Minus => {
                 self.asm.push_cmd(Command::Sub {
-                    dst: Register::Rax.to_size(left_size),
-                    src: Register::Rbx.to_size(left_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::Mul => {
                 self.asm.push_cmd(Command::Imul {
-                    dst: Register::Rax.to_size(left_size),
-                    src: Register::Rbx.to_size(left_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::IntegerDiv => {
-                self.asm.push_cmd(left_size.sign_extention().unwrap());
+                self.asm.push_cmd(expr_size.sign_extention().unwrap());
                 self.asm
-                    .push_cmd(Command::IDiv(Register::Rbx.to_size(left_size)));
+                    .push_cmd(Command::IDiv(Register::Rbx.to_size(expr_size)));
             }
             TokenType::And => {
                 self.asm.push_cmd(Command::And {
@@ -1595,17 +1624,17 @@ impl<'a, W: Write> Compiler<'a, W> {
             | TokenType::GreaterEqual
             | TokenType::GreaterThen
             | TokenType::LessThen
-            | TokenType::LessEqual => self.visit_comparison(&op)?,
+            | TokenType::LessEqual => self.visit_comparison(&op, expr_size)?,
             _ => unreachable!(),
         }
         Ok(())
     }
 
     #[inline]
-    fn visit_comparison(&mut self, cmp_token: &TokenType) -> Result<()> {
+    fn visit_comparison(&mut self, cmp_token: &TokenType, expr_size: Size) -> Result<()> {
         self.asm.push_cmd(Command::Cmp {
-            op1: Register::Rax.into(),
-            op2: Register::Rbx.into(),
+            op1: Register::Rax.to_size(expr_size).into(),
+            op2: Register::Rbx.to_size(expr_size).into(),
         });
         match cmp_token {
             TokenType::Equal => {

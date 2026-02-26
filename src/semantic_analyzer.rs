@@ -359,9 +359,10 @@ impl SemanticAnalyzer {
                     TokenType::Minus | TokenType::RealDiv | TokenType::Mul => {
                         match (&left_type, &right_type) {
                             (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
-                            (TypeSymbol::Int64, TypeSymbol::Int64) => Ok(TypeSymbol::Int64),
-                            (TypeSymbol::Int64, TypeSymbol::Integer) => Ok(TypeSymbol::Int64),
-                            (TypeSymbol::Integer, TypeSymbol::Int64) => Ok(TypeSymbol::Integer),
+                            (
+                                TypeSymbol::Int64 | TypeSymbol::Integer,
+                                TypeSymbol::Int64 | TypeSymbol::Integer,
+                            ) => Ok(TypeSymbol::Int64),
                             (
                                 TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
                                 TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
@@ -385,6 +386,7 @@ impl SemanticAnalyzer {
                             TypeSymbol::Int64 | TypeSymbol::Real | TypeSymbol::Integer,
                             TypeSymbol::Int64,
                         ) => Ok(TypeSymbol::Int64),
+                        (TypeSymbol::Int64, TypeSymbol::Integer) => Ok(TypeSymbol::Int64),
                         _ => Err(Error::SemanticError {
                             msg: format!(
                                 "integer division is not supported for {:?} and {:?}",
@@ -399,9 +401,10 @@ impl SemanticAnalyzer {
                             Ok(TypeSymbol::String)
                         }
                         (TypeSymbol::Integer, TypeSymbol::Integer) => Ok(TypeSymbol::Integer),
-                        (TypeSymbol::Int64, TypeSymbol::Int64) => Ok(TypeSymbol::Int64),
-                        (TypeSymbol::Int64, TypeSymbol::Integer) => Ok(TypeSymbol::Int64),
-                        (TypeSymbol::Integer, TypeSymbol::Int64) => Ok(TypeSymbol::Integer),
+                        (
+                            TypeSymbol::Int64 | TypeSymbol::Integer,
+                            TypeSymbol::Int64 | TypeSymbol::Integer,
+                        ) => Ok(TypeSymbol::Int64),
                         (
                             TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
                             TypeSymbol::Real | TypeSymbol::Integer | TypeSymbol::Int64,
