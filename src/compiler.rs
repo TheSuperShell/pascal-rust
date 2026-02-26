@@ -11,7 +11,7 @@ use crate::{
 use std::fmt::Display;
 use std::{collections::HashSet, io::Write};
 
-const DIV0_ERROR: &'static str = "div0_error";
+const STD_DIV0_ERROR: &'static str = "std.error.div0_error";
 
 #[derive(Debug, Clone)]
 enum DefaultValue {
@@ -559,6 +559,11 @@ impl<'a, W: Write> Assambler<'a, W> {
         writeln!(self.output, "{}", directive)
     }
 
+    pub fn external(&mut self, external_function_name: &str) -> std::io::Result<()> {
+        self.flush()?;
+        writeln!(self.output, "extern {external_function_name}")
+    }
+
     pub fn label(&mut self, label: &str) -> std::io::Result<()> {
         self.flush()?;
         writeln!(self.output, "{}:", label)
@@ -1002,8 +1007,8 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.newline()?;
         self.asm.directive("section .text")?;
         self.asm.directive("global main")?;
-        self.asm.directive("extern printf")?;
-        self.asm.directive("extern div0_error")?;
+        self.asm.external("printf")?;
+        self.asm.external(STD_DIV0_ERROR)?;
         self.asm.newline()?;
         declarations
             .iter()
@@ -1662,7 +1667,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     op1: Register::Rbx.into(),
                     op2: Register::Rbx.into(),
                 });
-                self.asm.push_cmd(Command::Jz(DIV0_ERROR.into()));
+                self.asm.push_cmd(Command::Jz(STD_DIV0_ERROR.into()));
                 self.asm
                     .push_cmd(Command::IDiv(Register::Rbx.to_size(expr_size)));
             }
