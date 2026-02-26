@@ -896,6 +896,7 @@ impl<'a> Parser<'a> {
                 ));
             }
             TokenType::IntegerConst(_)
+            | TokenType::Int64Const(_)
             | TokenType::RealConst(_)
             | TokenType::BooleanConst(_)
             | TokenType::StringConst
