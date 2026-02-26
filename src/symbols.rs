@@ -208,6 +208,15 @@ impl VarSymbol {
             _ => None,
         }
     }
+    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Size {
+        semantic_metadata
+            .types
+            .get(match self {
+                Self::Const { type_symbol, .. } => *type_symbol,
+                Self::Var { type_symbol, .. } => *type_symbol,
+            })
+            .get_size(semantic_metadata)
+    }
     pub fn to_string(&self, semantic_metadata: &SemanticMetadata) -> String {
         match self {
             Self::Var {

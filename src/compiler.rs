@@ -282,6 +282,12 @@ impl Display for Operand<'_> {
     }
 }
 
+impl<'a> Into<Operand<'a>> for Memory<'a> {
+    fn into(self) -> Operand<'a> {
+        Operand::Memory(self)
+    }
+}
+
 impl<'a> Into<Operand<'a>> for Register<'a> {
     fn into(self) -> Operand<'a> {
         Operand::Register(self)
@@ -1344,8 +1350,21 @@ impl<'a, W: Write> Compiler<'a, W> {
                             let symbol = semantic_metadata.vars.get(*var_symbol);
                             let reg = Register::from_param_index64(i);
                             let param_mode = symbol.pass_mode().unwrap();
+                            let left_size = symbol.get_size(semantic_metadata);
+                            let right_size = semantic_metadata
+                                .get_expr_type(arg)
+                                .unwrap()
+                                .get_size(semantic_metadata);
                             match param_mode {
-                                VarPassMode::Val => self.asm.push_cmd(Command::Pop(reg.into())),
+                                VarPassMode::Val => {
+                                    self.asm.push_cmd(Command::Pop(reg.clone().into()));
+                                    if left_size > right_size {
+                                        self.asm.push_cmd(Command::Movsx {
+                                            dst: reg.clone().into(),
+                                            src: reg.to_size(right_size).into(),
+                                        });
+                                    }
+                                }
                                 VarPassMode::Ref => {
                                     let var_pass_mode =
                                         semantic_metadata.get_var_pass_mode(arg).unwrap();
