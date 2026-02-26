@@ -74,7 +74,11 @@ impl SymbolTable {
         let mut st = Self::new(0, "builtin", None);
         let write = callables.alloc(CallableSymbol {
             name: "write".into(),
-            params: vec![],
+            params: vec![vars.alloc(VarSymbol::Var {
+                name: "val".into(),
+                pass_mode: VarPassMode::Val,
+                type_symbol: types.alloc(TypeSymbol::Any),
+            })],
             param_input_mode: ParamInputMode::Repeat,
             body: CallableType::Builtin { func: write },
             return_type: None,

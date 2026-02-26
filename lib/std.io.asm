@@ -15,7 +15,7 @@ std.io.write:
     sub rsp, 32
 
     mov rdx, rcx
-    mov rcx, [fmt_i64]
+    lea rcx, [fmt_i64]
     call printf
 
     add rsp, 32
