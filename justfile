@@ -10,7 +10,7 @@ run-compile source target *ARGS:
     nasm -f win64 -o target/error.obj lib/error.asm
     gcc -o target/{{target}}.exe target/error.obj target/compiled.obj
     rm target/compiled.obj target/error.obj
-    ./target/{{target}}.exe
+    ./target/{{target}}.exe || echo "Program existed with code $?"
 
 
 [group('asm')]
