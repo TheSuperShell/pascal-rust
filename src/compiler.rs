@@ -8,10 +8,17 @@ use crate::{
     tokens::TokenType,
     utils::Size,
 };
-use std::fmt::Display;
-use std::{collections::HashSet, io::Write};
+use std::io::Write;
+use std::{collections::HashMap, fmt::Display, sync::LazyLock};
 
 const STD_DIV0_ERROR: &'static str = "std.error.div0_error";
+
+static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    map.insert("writeln", "std.io.writeln");
+    map.insert("write", "std.io.write");
+    map
+});
 
 #[derive(Debug, Clone)]
 enum DefaultValue {
@@ -594,7 +601,6 @@ struct ActivationRecord<'a> {
 #[derive(Debug, Clone)]
 struct CallStack<'a> {
     stack: Vec<ActivationRecord<'a>>,
-    callables: HashSet<String>,
 }
 
 impl<'a> CallStack<'a> {
@@ -604,7 +610,6 @@ impl<'a> CallStack<'a> {
                 scope_name: "global",
                 local_variables: Vec::new(),
             }],
-            callables: HashSet::new(),
         }
     }
 
@@ -699,16 +704,6 @@ impl<'a> CallStack<'a> {
             .fold(0, |v, (_, size)| v + size.to_bytes());
         ((total_var_size + 15) / 16) * 16
     }
-
-    #[inline]
-    pub fn contains_callable(&self, name: &str) -> bool {
-        self.callables.contains(name)
-    }
-
-    #[inline]
-    pub fn push_callable(&mut self, name: &str) {
-        self.callables.insert(name.into());
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -797,18 +792,15 @@ impl<'a, W: Write> Compiler<'a, W> {
                     Stmt::Block {
                         declarations,
                         statements,
-                    } => {
-                        self.call_stack.push_callable(func_name);
-                        self.enter_scope(
-                            func_name,
-                            params,
-                            declarations,
-                            statements,
-                            return_type.map(|t| *semantic_metadata.type_type_map.get(&t).unwrap()),
-                            tree,
-                            semantic_metadata,
-                        )
-                    }
+                    } => self.enter_scope(
+                        func_name,
+                        params,
+                        declarations,
+                        statements,
+                        return_type.map(|t| *semantic_metadata.type_type_map.get(&t).unwrap()),
+                        tree,
+                        semantic_metadata,
+                    ),
                     _ => unreachable!(),
                 }
             }
@@ -842,7 +834,6 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
         self.call_stack.push_ar(scope_name);
-        self.call_stack.push_callable(scope_name);
         self.asm
             .comment(&format!("{scope_name} function entry point"))?;
         self.asm.label(scope_name)?;
@@ -965,8 +956,6 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         debug!(target: "pascal::compiler", "Entering global scope");
         self.asm.directive("section .data")?;
-        self.asm.directive("fmt db \"%lld\", 0")?;
-        self.asm.directive("newline db 10, 0")?;
         let global_vars = declarations
             .iter()
             .filter(|d| matches!(d, Decl::VarDecl { .. }))
@@ -1007,8 +996,10 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.newline()?;
         self.asm.directive("section .text")?;
         self.asm.directive("global main")?;
-        self.asm.external("printf")?;
         self.asm.external(STD_DIV0_ERROR)?;
+        self.asm.external(BUILTIN_CALLABLES.get("write").unwrap())?;
+        self.asm
+            .external(BUILTIN_CALLABLES.get("writeln").unwrap())?;
         self.asm.newline()?;
         declarations
             .iter()
@@ -1018,7 +1009,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.label("main")?;
         self.asm.comment("block")?;
         let local_size = self.call_stack.aligned_size();
-        self.enter_func(local_size)?;
+        self.enter_func(32 + local_size)?;
         self.visit_stmt(statements, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Xor {
             dst: Register::Eax,
@@ -1360,7 +1351,10 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         match tree.expr_pool.get(*call) {
             Expr::Call { name, args } => {
-                let func_name = name.lexem(tree.source_code);
+                let mut func_name = name.lexem(tree.source_code);
+                if let Some(&callable_name) = BUILTIN_CALLABLES.get(func_name) {
+                    func_name = callable_name;
+                }
                 let callable_symbol = semantic_metadata.get_callable_symbol(call).unwrap();
                 let params = callable_symbol
                     .params
@@ -1369,124 +1363,71 @@ impl<'a, W: Write> Compiler<'a, W> {
                     .take(args.len())
                     .zip(args)
                     .collect::<Vec<_>>();
-                if self.call_stack.contains_callable(func_name) {
-                    params
-                        .iter()
-                        .filter(|(v, _)| {
-                            matches!(
-                                semantic_metadata.vars.get(**v).pass_mode().unwrap(),
-                                VarPassMode::Val
-                            )
-                        })
-                        .try_for_each(|(_, arg)| {
-                            self.visit_expr(arg, tree, semantic_metadata)?;
-                            Ok::<(), Error>(())
-                        })?;
-                    params
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .try_for_each(|(i, &(var_symbol, arg))| {
-                            let symbol = semantic_metadata.vars.get(*var_symbol);
-                            let reg = Register::from_param_index64(i);
-                            let param_mode = symbol.pass_mode().unwrap();
-                            let left_size = symbol.get_size(semantic_metadata);
-                            let right_size = semantic_metadata
-                                .get_expr_type(arg)
-                                .unwrap()
-                                .get_size(semantic_metadata);
-                            match param_mode {
-                                VarPassMode::Val => {
-                                    self.asm.push_cmd(Command::Pop(reg.clone().into()));
-                                    if left_size > right_size {
-                                        self.asm.push_cmd(Command::Movsx {
-                                            dst: reg.clone().into(),
-                                            src: reg.to_size(right_size).into(),
+                params
+                    .iter()
+                    .filter(|(v, _)| {
+                        matches!(
+                            semantic_metadata.vars.get(**v).pass_mode().unwrap(),
+                            VarPassMode::Val
+                        )
+                    })
+                    .try_for_each(|(_, arg)| {
+                        self.visit_expr(arg, tree, semantic_metadata)?;
+                        Ok::<(), Error>(())
+                    })?;
+                params
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .try_for_each(|(i, &(var_symbol, arg))| {
+                        let symbol = semantic_metadata.vars.get(*var_symbol);
+                        let reg = Register::from_param_index64(i);
+                        let param_mode = symbol.pass_mode().unwrap();
+                        let left_size = symbol.get_size(semantic_metadata);
+                        let right_size = semantic_metadata
+                            .get_expr_type(arg)
+                            .unwrap()
+                            .get_size(semantic_metadata);
+                        match param_mode {
+                            VarPassMode::Val => {
+                                self.asm.push_cmd(Command::Pop(reg.clone().into()));
+                                if left_size > right_size {
+                                    self.asm.push_cmd(Command::Movsx {
+                                        dst: reg.clone().into(),
+                                        src: reg.to_size(right_size).into(),
+                                    });
+                                }
+                            }
+                            VarPassMode::Ref => {
+                                let var_pass_mode =
+                                    semantic_metadata.get_var_pass_mode(arg).unwrap();
+                                match var_pass_mode {
+                                    VarPassMode::Val => {
+                                        self.asm.push_cmd(Command::Lea {
+                                            dst: reg.into(),
+                                            src: self.get_variable_memory_address(
+                                                arg,
+                                                tree,
+                                                semantic_metadata,
+                                            ),
+                                        });
+                                    }
+                                    VarPassMode::Ref => {
+                                        self.asm.push_cmd(Command::Mov {
+                                            dst: reg.into(),
+                                            src: Operand::Memory(self.get_variable_memory_address(
+                                                arg,
+                                                tree,
+                                                semantic_metadata,
+                                            )),
                                         });
                                     }
                                 }
-                                VarPassMode::Ref => {
-                                    let var_pass_mode =
-                                        semantic_metadata.get_var_pass_mode(arg).unwrap();
-                                    match var_pass_mode {
-                                        VarPassMode::Val => {
-                                            self.asm.push_cmd(Command::Lea {
-                                                dst: reg.into(),
-                                                src: self.get_variable_memory_address(
-                                                    arg,
-                                                    tree,
-                                                    semantic_metadata,
-                                                ),
-                                            });
-                                        }
-                                        VarPassMode::Ref => {
-                                            self.asm.push_cmd(Command::Mov {
-                                                dst: reg.into(),
-                                                src: Operand::Memory(
-                                                    self.get_variable_memory_address(
-                                                        arg,
-                                                        tree,
-                                                        semantic_metadata,
-                                                    ),
-                                                ),
-                                            });
-                                        }
-                                    }
-                                }
                             }
-                            Ok::<(), Error>(())
-                        })?;
-                    self.asm.push_cmd(Command::Call { name: func_name });
-                    return Ok(());
-                }
-                if func_name != "writeln" {
-                    unimplemented!("Only writeln is supported as a builtin funcion for now")
-                }
-                self.asm.comment("call writeln")?;
-                for arg in args {
-                    self.visit_expr(arg, tree, semantic_metadata)?;
-                    let arg_size = semantic_metadata
-                        .get_expr_type(arg)
-                        .unwrap()
-                        .get_size(semantic_metadata);
-                    self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                    if arg_size < Size::S64bit {
-                        self.asm.push_cmd(Command::Movsx {
-                            dst: Register::Rax,
-                            src: Register::Rax.to_size(arg_size).into(),
-                        });
-                    }
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rcx.into(),
-                        src: Register::Variable("fmt").into(),
-                    });
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rdx.into(),
-                        src: Register::Rax.into(),
-                    });
-                    self.asm.push_cmd(Command::Sub {
-                        dst: Register::Rsp,
-                        src: Register::Integer(32),
-                    });
-                    self.asm.push_cmd(Command::Call { name: "printf" });
-                    self.asm.push_cmd(Command::Add {
-                        dst: Register::Rsp,
-                        src: Register::Integer(32),
-                    });
-                }
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rcx.into(),
-                    src: Register::Variable("newline").into(),
-                });
-                self.asm.push_cmd(Command::Sub {
-                    dst: Register::Rsp,
-                    src: Register::Integer(32),
-                });
-                self.asm.push_cmd(Command::Call { name: "printf" });
-                self.asm.push_cmd(Command::Add {
-                    dst: Register::Rsp,
-                    src: Register::Integer(32),
-                });
+                        }
+                        Ok::<(), Error>(())
+                    })?;
+                self.asm.push_cmd(Command::Call { name: func_name });
                 Ok(())
             }
             _ => unreachable!(),

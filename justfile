@@ -7,9 +7,9 @@ run source *ARGS:
 run-compile source target *ARGS:
     cargo run compile {{source}} target/{{target}}.asm {{ARGS}}
     nasm -f win64 -o target/compiled.obj target/{{target}}.asm
-    nasm -f win64 -o target/error.obj lib/std.error.asm
-    gcc -o target/{{target}}.exe target/error.obj target/compiled.obj
-    rm target/compiled.obj target/error.obj
+    nasm -f win64 -o target/std.error.obj lib/std.error.asm
+    nasm -f win64 -o target/std.io.obj lib/std.io.asm
+    gcc -o target/{{target}}.exe target/std.error.obj target/compiled.obj target/std.io.obj; rm target/compiled.obj target/std.error.obj target/std.io.obj
     ./target/{{target}}.exe || echo "Program existed with code $?"
 
 
