@@ -577,49 +577,73 @@ impl<'a, W: Write> Assambler<'a, W> {
 }
 
 #[derive(Debug, Clone)]
-struct Locals<'a> {
+struct ActivationRecord<'a> {
     scope_name: &'a str,
     local_variables: Vec<(String, Size)>,
+}
+
+#[derive(Debug, Clone)]
+struct CallStack<'a> {
+    stack: Vec<ActivationRecord<'a>>,
     callables: HashSet<String>,
 }
 
-impl<'a> Locals<'a> {
+impl<'a> CallStack<'a> {
     pub fn new() -> Self {
         Self {
-            scope_name: "global",
-            local_variables: Vec::new(),
+            stack: vec![ActivationRecord {
+                scope_name: "global",
+                local_variables: Vec::new(),
+            }],
             callables: HashSet::new(),
         }
     }
 
     #[inline]
     pub fn push_ar(&mut self, scope_name: &'a str) {
-        self.scope_name = scope_name;
-        debug!(target: "pascal::compiler", "Entering {} scope", self.scope_name);
-        self.local_variables = Vec::new()
+        debug!(target: "pascal::compiler", "Entering {} scope", scope_name);
+        self.stack.push(ActivationRecord {
+            scope_name,
+            local_variables: Vec::new(),
+        });
     }
     #[inline]
     pub fn pop_ar(&mut self) {
-        debug!(target: "pascal::compiler", "Leaving {} scope", self.scope_name);
-        debug!(target: "pascal::compiler", "{:?}", self.local_variables);
-        self.local_variables = Vec::new();
-        debug!(target: "pascal::compiler", "Entering global scope");
+        if let Some(ar) = self.stack.last() {
+            debug!(target: "pascal::compiler", "Leaving {} scope", ar.scope_name);
+            debug!(target: "pascal::compiler", "{:?}", ar.local_variables);
+        }
+        self.stack.pop().unwrap();
+        if let Some(ar) = self.stack.last() {
+            debug!(target: "pascal::compiler", "Entering {} scope", ar.scope_name);
+        }
     }
 
     #[inline]
     pub fn push_var(&mut self, name: &str, size: Size) {
-        self.local_variables.push((name.into(), size));
+        self.stack
+            .last_mut()
+            .unwrap()
+            .local_variables
+            .push((name.into(), size));
     }
 
     #[inline]
     pub fn push_ptr(&mut self, name: &str) {
-        self.local_variables.push((name.into(), Size::S64bit));
+        self.stack
+            .last_mut()
+            .unwrap()
+            .local_variables
+            .push((name.into(), Size::S64bit));
     }
 
     #[inline]
     pub fn lookup_var_mem<'s>(&self, name: &'s str) -> StackMemory<'s> {
         let mut sum = 0;
-        self.local_variables
+        self.stack
+            .last()
+            .unwrap()
+            .local_variables
             .iter()
             .rev()
             .find_map(|(n, size)| {
@@ -637,7 +661,10 @@ impl<'a> Locals<'a> {
     #[inline]
     pub fn lookup_var_addr<'s>(&self, name: &'s str) -> StackMemory<'a> {
         let mut sum = 0;
-        self.local_variables
+        self.stack
+            .last()
+            .unwrap()
+            .local_variables
             .iter()
             .rev()
             .find_map(|(n, size)| {
@@ -655,6 +682,9 @@ impl<'a> Locals<'a> {
     #[inline]
     pub fn aligned_size(&self) -> usize {
         let total_var_size = self
+            .stack
+            .last()
+            .unwrap()
             .local_variables
             .iter()
             .fold(0, |v, (_, size)| v + size.to_bytes());
@@ -675,7 +705,7 @@ impl<'a> Locals<'a> {
 #[derive(Debug, Clone)]
 pub struct Compiler<'a, W: Write> {
     asm: Assambler<'a, W>,
-    call_stack: Locals<'a>,
+    call_stack: CallStack<'a>,
     current_l_num: u64,
     loop_exit_labels: Vec<String>,
     loop_start_labels: Vec<String>,
@@ -685,7 +715,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     pub fn new(output: W) -> Result<Self> {
         Ok(Compiler {
             asm: Assambler::new(output, true),
-            call_stack: Locals::new(),
+            call_stack: CallStack::new(),
             current_l_num: 0,
             loop_exit_labels: Vec::new(),
             loop_start_labels: Vec::new(),
