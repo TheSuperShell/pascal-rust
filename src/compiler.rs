@@ -11,6 +11,8 @@ use crate::{
 use std::fmt::Display;
 use std::{collections::HashSet, io::Write};
 
+const DIV0_ERROR: &'static str = "div0_error";
+
 #[derive(Debug, Clone)]
 enum DefaultValue {
     Integer(i32),
@@ -397,6 +399,7 @@ enum Command<'a> {
     Jg(String),
     Jge(String),
     Jl(String),
+    Jz(String),
     Jle(String),
     Jmp(String),
     Sete(Register<'a>),
@@ -519,6 +522,7 @@ impl<'a, W: Write> Assambler<'a, W> {
                 Command::Neg(dst) => writeln!(self.output, "neg {}", dst),
                 Command::Ret => writeln!(self.output, "ret"),
                 Command::Leave => writeln!(self.output, "leave"),
+                Command::Jz(l) => writeln!(self.output, "jz {l}"),
                 Command::Call { name } => writeln!(self.output, "call {}", name),
                 Command::Xor { dst, src } => writeln!(self.output, "xor {}, {}", dst, src),
                 Command::Not(r) => writeln!(self.output, "not {}", r),
@@ -999,6 +1003,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.directive("section .text")?;
         self.asm.directive("global main")?;
         self.asm.directive("extern printf")?;
+        self.asm.directive("extern div0_error")?;
         self.asm.newline()?;
         declarations
             .iter()
@@ -1653,6 +1658,11 @@ impl<'a, W: Write> Compiler<'a, W> {
             }
             TokenType::IntegerDiv => {
                 self.asm.push_cmd(expr_size.sign_extention().unwrap());
+                self.asm.push_cmd(Command::Test {
+                    op1: Register::Rbx.into(),
+                    op2: Register::Rbx.into(),
+                });
+                self.asm.push_cmd(Command::Jz(DIV0_ERROR.into()));
                 self.asm
                     .push_cmd(Command::IDiv(Register::Rbx.to_size(expr_size)));
             }
