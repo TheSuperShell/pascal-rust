@@ -939,13 +939,18 @@ impl SemanticAnalyzer {
             .map(|(p, expr_type)| {
                 let expr_type = self.semantic_metadata.types.get(expr_type);
                 let var_symbol = self.semantic_metadata.vars.get(*p);
-                let param_type = match var_symbol {
-                    VarSymbol::Var { type_symbol, .. } => {
-                        self.semantic_metadata.types.get(*type_symbol)
-                    }
+                let (param_type, mode) = match var_symbol {
+                    VarSymbol::Var {
+                        type_symbol,
+                        pass_mode,
+                        ..
+                    } => (self.semantic_metadata.types.get(*type_symbol), pass_mode),
                     _ => panic!("unreachable"),
                 };
-                if !assinable(&self.semantic_metadata.types, &param_type, &expr_type) {
+                if matches!(mode, VarPassMode::Ref)
+                    && !TypeSymbol::eq(&self.semantic_metadata.types, param_type, expr_type)
+                    || !assinable(&self.semantic_metadata.types, &param_type, &expr_type)
+                {
                     return Err(Error::SemanticError {
                         msg: format!(
                             "parameter should be of type {:?}, got {:?}",
