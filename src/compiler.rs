@@ -77,6 +77,7 @@ enum Register<'a> {
     Al,
     Bl,
     Dl,
+    Cl,
 
     Xmm0,
     Xmm1,
@@ -105,6 +106,7 @@ impl<'a> Display for Register<'a> {
             Register::Al => write!(f, "al"),
             Register::Bl => write!(f, "bl"),
             Register::Dl => write!(f, "dl"),
+            Register::Cl => write!(f, "cl"),
             Register::Xmm0 => write!(f, "xmm0"),
             Register::Xmm1 => write!(f, "xmm1"),
             Register::Xmm2 => write!(f, "xmm2"),
@@ -128,7 +130,7 @@ impl<'a> Register<'a> {
             0 => Register::Rcx,
             1 => Register::Rdx,
             2 => Register::R8,
-            4 => Register::R9,
+            3 => Register::R9,
             _ => unimplemented!("more input variables are not implemented yet"),
         }
     }
@@ -148,6 +150,8 @@ impl<'a> Register<'a> {
             (Register::Rdx, Size::S64bit) => Self::Rdx,
             (Register::Rdx, Size::S8bit) => Self::Dl,
             (Register::R8, Size::S32bit) => Self::R8d,
+            (Register::Rcx, Size::S8bit) => Self::Cl,
+            (Register::R9, Size::S32bit) => Self::R9d,
             _ => unimplemented!("{} - {:?}", self, size),
         }
     }
@@ -1258,8 +1262,8 @@ impl<'a, W: Write> Compiler<'a, W> {
         let end_l = self.next_l("endif");
         self.asm.push_cmd(Command::Je(else_l.clone()));
         self.visit_stmt(&cond.expr, tree, semantic_metadata)?;
-        let mut elifs = elifs.iter();
-        while let Some(elif) = elifs.next() {
+        let mut elifs_iter = elifs.iter().peekable();
+        while let Some(elif) = elifs_iter.next() {
             self.asm.push_cmd(Command::Jmp(end_l.clone()));
             self.asm.label(&else_l)?;
             else_l = self.next_l("else");
@@ -1269,13 +1273,19 @@ impl<'a, W: Write> Compiler<'a, W> {
                 op1: Register::Al.into(),
                 op2: Register::Integer(0).into(),
             });
-            self.asm.push_cmd(Command::Je(else_l.clone()));
+            if elifs_iter.peek().is_some() || else_statement.is_some() {
+                self.asm.push_cmd(Command::Je(else_l.clone()));
+            } else {
+                self.asm.push_cmd(Command::Je(end_l.clone()));
+            }
             self.visit_stmt(&elif.expr, tree, semantic_metadata)?;
         }
         if let Some(else_stmt) = else_statement {
             self.asm.push_cmd(Command::Jmp(end_l.clone()));
             self.asm.label(&else_l)?;
             self.visit_stmt(else_stmt, tree, semantic_metadata)?;
+            self.asm.label(&end_l)?;
+        } else if elifs.len() > 0 {
             self.asm.label(&end_l)?;
         } else {
             self.asm.label(&else_l)?;
@@ -1328,7 +1338,8 @@ impl<'a, W: Write> Compiler<'a, W> {
             .expect("size is expected");
         self.visit_expr(init, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-        self.asm.push_cmd(Command::Dec(Register::Rax));
+        self.asm
+            .push_cmd(Command::Dec(Register::Rax.to_size(var_size)));
         self.asm.push_cmd(Command::Mov {
             dst: var_mem.clone(),
             src: Register::Rax.to_size(var_size).into(),
@@ -1344,14 +1355,15 @@ impl<'a, W: Write> Compiler<'a, W> {
             dst: Register::Rax.to_size(var_size).into(),
             src: var_mem.clone().into(),
         });
-        self.asm.push_cmd(Command::Inc(Register::Rax.into()));
+        self.asm
+            .push_cmd(Command::Inc(Register::Rax.to_size(var_size).into()));
         self.asm.push_cmd(Command::Mov {
             dst: var_mem.into(),
             src: Register::Rax.to_size(var_size).into(),
         });
         self.asm.push_cmd(Command::Cmp {
-            op1: Register::Rax.into(),
-            op2: StackMemory::new(Register::Rsp, Size::S64bit).into(),
+            op1: Register::Rax.to_size(var_size).into(),
+            op2: StackMemory::new(Register::Rsp, var_size).into(),
         });
         self.asm.push_cmd(Command::Jg(l2.clone()));
         self.visit_stmt(body, tree, semantic_metadata)?;
@@ -1611,11 +1623,17 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
         self.visit_expr(expr, tree, semantic_metadata)?;
+        let var_size = semantic_metadata
+            .get_expr_type(expr)
+            .unwrap()
+            .get_size(semantic_metadata)
+            .expect("expected to have size");
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         match op {
             TokenType::Plus => {}
             TokenType::Minus => {
-                self.asm.push_cmd(Command::Neg(Register::Rax));
+                self.asm
+                    .push_cmd(Command::Neg(Register::Rax.to_size(var_size)));
             }
             TokenType::Not => {
                 self.asm.push_cmd(Command::Xor {
@@ -1747,5 +1765,209 @@ impl<'a, W: Write> Compiler<'a, W> {
             _ => unreachable!(),
         };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self};
+    use std::process::{Command, Output};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    static ARTIFACT: &'static str = "test_artifacts";
+    static GITIGNORE: &'static str = "test_artifacts/.gitignore";
+    static TEST_CASES: &'static str = "test_cases/compiler";
+
+    static STD_ERROR_SRC: &'static str = "lib/std.error.asm";
+    static STD_ERROR_OBJ: &'static str = "test_artifacts/std.error.obj";
+    static STD_IO_SRC: &'static str = "lib/std.io.asm";
+    static STD_IO_OBJ: &'static str = "test_artifacts/std.io.obj";
+
+    fn init() {
+        INIT.call_once(|| {
+            let _ = fs::create_dir(ARTIFACT);
+            let mut gitignore = fs::File::create(GITIGNORE).unwrap();
+            write!(gitignore, "*").unwrap();
+            let result = Command::new("nasm")
+                .arg("-f")
+                .arg("win64")
+                .arg("-g")
+                .arg("-F")
+                .arg("cv8")
+                .arg("-o")
+                .arg(STD_ERROR_OBJ)
+                .arg(STD_ERROR_SRC)
+                .output()
+                .expect("failed to compile standard error");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8(result.stderr).unwrap()
+            );
+            let result = Command::new("nasm")
+                .arg("-f")
+                .arg("win64")
+                .arg("-g")
+                .arg("-F")
+                .arg("cv8")
+                .arg("-o")
+                .arg(STD_IO_OBJ)
+                .arg(STD_IO_SRC)
+                .output()
+                .expect("failed to compile standard io");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8(result.stderr).unwrap()
+            );
+        });
+    }
+
+    struct TestExecutable<'a>(&'a str);
+
+    impl<'a> TestExecutable<'a> {
+        fn create(name: &'a str) -> Self {
+            init();
+            let pas_path = format!("{}/{}.pas", TEST_CASES, name);
+            let asm_path = format!("{}/{}.asm", ARTIFACT, name);
+            let obj_path = format!("{}/{}.obj", ARTIFACT, name);
+            let exe_path = format!("{}/{}.exe", ARTIFACT, name);
+            let result = Command::new("cargo")
+                .arg("run")
+                .arg("compile")
+                .arg(&pas_path)
+                .arg(&asm_path)
+                .output()
+                .expect("failed to compile");
+            assert!(
+                result.status.success(),
+                "failed to compile: {} - {}",
+                String::from_utf8(result.stdout).unwrap(),
+                String::from_utf8(result.stderr).unwrap()
+            );
+            let result = Command::new("nasm")
+                .arg("-f")
+                .arg("win64")
+                .arg("-g")
+                .arg("-F")
+                .arg("cv8")
+                .arg("-o")
+                .arg(&obj_path)
+                .arg(&asm_path)
+                .output()
+                .expect("failed to compile asm");
+            assert!(
+                result.status.success(),
+                "failed to compile nasm: {}",
+                String::from_utf8(result.stderr).unwrap()
+            );
+            let result = Command::new("gcc")
+                .arg("-g")
+                .arg("-o")
+                .arg(&exe_path)
+                .arg(&obj_path)
+                .arg(STD_IO_OBJ)
+                .arg(STD_ERROR_OBJ)
+                .output()
+                .expect("failed to create executable");
+            assert!(
+                result.status.success(),
+                "failed to create executable: {}",
+                String::from_utf8(result.stderr).unwrap()
+            );
+            Self(name)
+        }
+
+        fn run(&self) -> Output {
+            Command::new(format!("{}/{}.exe", ARTIFACT, self.0))
+                .output()
+                .unwrap()
+        }
+    }
+
+    impl<'a> Drop for TestExecutable<'a> {
+        fn drop(&mut self) {
+            Command::new("rm")
+                // .arg(format!("{}/{}.exe", ARTIFACT, self.0))
+                .arg(format!("{}/{}.obj", ARTIFACT, self.0))
+                // .arg(format!("{}/{}.asm", ARTIFACT, self.0))
+                .spawn()
+                .expect("failed to remove the file");
+        }
+    }
+
+    macro_rules! test_succ {
+        (
+            $(
+                $name:ident ->
+                [$($first_output:literal$(,$output:literal)*$(,)?)?],
+            )+
+        ) => {
+            $(
+                #[test]
+                fn $name() {
+                    let executable = TestExecutable::create(stringify!($name));
+                    let output = executable.run();
+                    assert!(output.status.success());
+                    let mut _expected_output = Vec::<&str>::new();
+                    $(
+                        _expected_output.push($first_output);
+                        $(
+                            _expected_output.push($output);
+                        )*
+                    )?
+                    let expected_output = _expected_output.join("\n");
+                    let output = String::from_utf8(output.stdout).unwrap().trim().replace("\r", "");
+                    assert_eq!(output, expected_output);
+                }
+            )+
+        };
+    }
+
+    macro_rules! test_err {
+        (
+            $(
+                $name:ident ->
+                [$($first_err:literal$(,$err:literal)*$(,)?)?]
+            )+
+        ) => {
+            $(
+                #[test]
+                fn $name() {
+                    let executable = TestExecutable::create(stringify!($name));
+                    let output = executable.run();
+                    assert_eq!(output.status.code().unwrap(), 1);
+                    let mut _expected_output = Vec::<&str>::new();
+                    $(
+                        _expected_output.push($first_err);
+                        $(
+                            _expected_output.push($err);
+                        )*
+                    )?
+                    let expected_output = _expected_output.join("\n");
+                    let output = String::from_utf8(output.stderr).unwrap().trim().replace("\r", "");
+                    assert_eq!(output, expected_output);
+                }
+            )+
+        };
+    }
+
+    test_succ! {
+        test_simple_print -> ["-1"],
+        test_simple_math -> ["35", "29", "-29", "96", "10"],
+        test_expressions -> ["-16"],
+        test_booleans -> ["0", "1"],
+        test_if -> ["-1", "0", "1", "-1", "1", "1", "-1", "-1", "0"],
+        test_loops -> ["-5", "-4", "-2", "-1", "5", "4", "3", "2", "1"],
+        test_functions -> ["-10", "25"],
+        test_out -> ["30", "30"],
+        test_recursive -> ["120"],
+    }
+
+    test_err! {
+        test_div0_error -> ["Runtime error: division by zero"]
     }
 }
