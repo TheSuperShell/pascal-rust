@@ -37,20 +37,19 @@ pub enum TypeSymbol {
 }
 
 impl TypeSymbol {
-    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Size {
+    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Option<Size> {
         match self {
-            Self::Integer => Size::S32bit,
-            Self::Int64 => Size::S64bit,
-            Self::Real => Size::S64bit,
-            Self::Boolean => Size::S8bit,
-            Self::Char => Size::S8bit,
+            Self::Integer => Some(Size::S32bit),
+            Self::Int64 => Some(Size::S64bit),
+            Self::Real => Some(Size::S64bit),
+            Self::Boolean => Some(Size::S8bit),
+            Self::Char => Some(Size::S8bit),
             Self::Range(sym) => semantic_metadata
                 .types
                 .get(*sym)
                 .get_size(semantic_metadata),
-            Self::Any => Size::S64bit,
-            Self::Empty => Size::Null,
-            _ => Size::Unkown,
+            Self::Any => Some(Size::S64bit),
+            _ => None,
         }
     }
     pub fn is_ordinal(&self) -> bool {
@@ -208,7 +207,7 @@ impl VarSymbol {
             _ => None,
         }
     }
-    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Size {
+    pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Option<Size> {
         semantic_metadata
             .types
             .get(match self {

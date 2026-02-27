@@ -154,37 +154,34 @@ impl<'a> Register<'a> {
 }
 
 impl Size {
-    fn word(&self) -> &str {
+    fn word(&self) -> Option<&str> {
         match self {
-            Self::Null => "",
-            Self::Unkown => "qword",
-            Self::S8bit => "byte",
-            Self::S64bit => "qword",
-            Self::S32bit => "dword",
-            Self::S128bit => "oword",
-            Self::S16bit => "word",
+            Self::S8bit => Some("byte"),
+            Self::S64bit => Some("qword"),
+            Self::S32bit => Some("dword"),
+            Self::S128bit => Some("oword"),
+            Self::S16bit => Some("word"),
+            _ => None,
         }
     }
-    fn d(&self) -> &str {
+    fn d(&self) -> Option<&str> {
         match self {
-            Self::Null => "",
-            Self::Unkown => "dq",
-            Self::S8bit => "db",
-            Self::S64bit => "dq",
-            Self::S32bit => "dd",
-            Self::S128bit => "do",
-            Self::S16bit => "dw",
+            Self::S8bit => Some("db"),
+            Self::S64bit => Some("dq"),
+            Self::S32bit => Some("dd"),
+            Self::S128bit => Some("do"),
+            Self::S16bit => Some("dw"),
+            _ => None,
         }
     }
-    fn res(&self) -> &str {
+    fn res(&self) -> Option<&str> {
         match self {
-            Self::Null => "",
-            Self::Unkown => "resq",
-            Self::S8bit => "resb",
-            Self::S16bit => "resw",
-            Self::S32bit => "resd",
-            Self::S64bit => "resq",
-            Self::S128bit => "reso",
+            Self::S8bit => Some("resb 1"),
+            Self::S16bit => Some("resw 1"),
+            Self::S32bit => Some("resd 1"),
+            Self::S64bit => Some("resq 1"),
+            Self::S128bit => Some("reso 1"),
+            _ => None,
         }
     }
     fn sign_extention<'a>(&self) -> Option<Command<'a>> {
@@ -205,7 +202,14 @@ struct GlobalMemory<'a> {
 
 impl<'a> Display for GlobalMemory<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} [rel {}]", self.size.word(), self.name)
+        write!(
+            f,
+            "{} [rel {}]",
+            self.size
+                .word()
+                .expect("cannot access global memory for this size"),
+            self.name
+        )
     }
 }
 
@@ -234,8 +238,19 @@ impl<'a> StackMemory<'a> {
 impl Display for StackMemory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.offset {
-            0 => write!(f, "{} [{}]", self.size.word(), self.base),
-            _ => write!(f, "{} [{} - {}]", self.size.word(), self.base, self.offset),
+            0 => write!(
+                f,
+                "{} [{}]",
+                self.size.word().expect("cannot access stack for this size"),
+                self.base
+            ),
+            _ => write!(
+                f,
+                "{} [{} - {}]",
+                self.size.word().expect("cannot access stack for this size"),
+                self.base,
+                self.offset
+            ),
         }
     }
 }
@@ -595,6 +610,7 @@ impl<'a, W: Write> Assambler<'a, W> {
 #[derive(Debug, Clone)]
 struct ActivationRecord<'a> {
     scope_name: &'a str,
+    scope_level: usize,
     local_variables: Vec<(String, Size)>,
 }
 
@@ -608,6 +624,7 @@ impl<'a> CallStack<'a> {
         Self {
             stack: vec![ActivationRecord {
                 scope_name: "global",
+                scope_level: 0,
                 local_variables: Vec::new(),
             }],
         }
@@ -618,6 +635,7 @@ impl<'a> CallStack<'a> {
         debug!(target: "pascal::compiler", "Entering {} scope", scope_name);
         self.stack.push(ActivationRecord {
             scope_name,
+            scope_level: self.stack.last().map(|ar| ar.scope_level + 1).unwrap_or(0),
             local_variables: Vec::new(),
         });
     }
@@ -661,10 +679,11 @@ impl<'a> CallStack<'a> {
             .iter()
             .rev()
             .find_map(|(n, size)| {
+                let size_bytes = size.to_bytes();
                 if n == name {
-                    Some((sum + size.to_bytes(), size))
+                    Some((sum + size_bytes, size))
                 } else {
-                    sum += size.to_bytes();
+                    sum += size_bytes;
                     None
                 }
             })
@@ -766,7 +785,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                 let var_size = semantic_metadata
                     .get_expr_type(var)
                     .unwrap()
-                    .get_size(semantic_metadata);
+                    .get_size(semantic_metadata)
+                    .unwrap();
                 self.call_stack.push_var(var_name, var_size);
                 Ok(default_value.map(|v| (var_name, var_size, v)))
             }
@@ -852,7 +872,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                     semantic_metadata
                         .get_expr_type(&param.var)
                         .unwrap()
-                        .get_size(semantic_metadata),
+                        .get_size(semantic_metadata)
+                        .unwrap(),
                     semantic_metadata.get_var_pass_mode(&param.var).unwrap(),
                 )
             })
@@ -870,7 +891,8 @@ impl<'a, W: Write> Compiler<'a, W> {
             let return_size = semantic_metadata
                 .types
                 .get(return_type_ref)
-                .get_size(semantic_metadata);
+                .get_size(semantic_metadata)
+                .unwrap();
             self.call_stack.push_var("result", return_size);
         }
         let local_size = self.call_stack.aligned_size();
@@ -912,7 +934,8 @@ impl<'a, W: Write> Compiler<'a, W> {
             let return_size = semantic_metadata
                 .types
                 .get(return_type)
-                .get_size(semantic_metadata);
+                .get_size(semantic_metadata)
+                .unwrap();
             self.asm.push_cmd(Command::Mov {
                 dst: Register::Rax.to_size(return_size).into(),
                 src: self.call_stack.lookup_var_mem("result").into(),
@@ -969,7 +992,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                     semantic_metadata
                         .get_expr_type(var)
                         .unwrap()
-                        .get_size(semantic_metadata),
+                        .get_size(semantic_metadata)
+                        .expect("size is expected"),
                     default_value,
                 ),
                 _ => unreachable!(),
@@ -981,8 +1005,11 @@ impl<'a, W: Write> Compiler<'a, W> {
             .map(|(name, size, value)| (name, size, value.unwrap()))
             .try_for_each(|(name, size, value)| {
                 let value = self.visit_default(&value, tree);
-                self.asm
-                    .directive(&format!("{name} {} {value}", size.d()))?;
+                self.asm.directive(&format!(
+                    "{name} {} {value}",
+                    size.d()
+                        .unwrap_or_else(|| panic!("cannot access d for size {:?}", size))
+                ))?;
                 Ok::<(), Error>(())
             })?;
         self.asm.newline()?;
@@ -991,7 +1018,11 @@ impl<'a, W: Write> Compiler<'a, W> {
             .iter()
             .filter(|(.., defualt)| defualt.is_none())
             .try_for_each(|(name, size, _)| {
-                self.asm.directive(&format!("{name} {} 1", size.res()))
+                self.asm.directive(&format!(
+                    "{name} {}",
+                    size.res()
+                        .unwrap_or_else(|| panic!("cannot access res for size {:?}", size))
+                ))
             })?;
         self.asm.newline()?;
         self.asm.directive("section .text")?;
@@ -1035,7 +1066,8 @@ impl<'a, W: Write> Compiler<'a, W> {
         let var_size = semantic_metadata
             .get_expr_type(var)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .expect("size is expected");
         match semantic_metadata.var_types.get(var).unwrap() {
             VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
             VarLocality::Global => GlobalMemory {
@@ -1100,11 +1132,13 @@ impl<'a, W: Write> Compiler<'a, W> {
         let left_size = semantic_metadata
             .get_expr_type(left)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .expect("size is epxected");
         let right_size = semantic_metadata
             .get_expr_type(right)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .expect("size is expected");
         let pass_mode = semantic_metadata.get_var_pass_mode(left).unwrap();
         self.visit_expr(right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
@@ -1245,7 +1279,8 @@ impl<'a, W: Write> Compiler<'a, W> {
         let var_size = semantic_metadata
             .get_expr_type(var)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .expect("size is expected");
         self.visit_expr(init, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Dec(Register::Rax));
@@ -1383,11 +1418,12 @@ impl<'a, W: Write> Compiler<'a, W> {
                         let symbol = semantic_metadata.vars.get(*var_symbol);
                         let reg = Register::from_param_index64(i);
                         let param_mode = symbol.pass_mode().unwrap();
-                        let left_size = symbol.get_size(semantic_metadata);
+                        let left_size = symbol.get_size(semantic_metadata).unwrap();
                         let right_size = semantic_metadata
                             .get_expr_type(arg)
                             .unwrap()
-                            .get_size(semantic_metadata);
+                            .get_size(semantic_metadata)
+                            .expect("size is expected");
                         match param_mode {
                             VarPassMode::Val => {
                                 self.asm.push_cmd(Command::Pop(reg.clone().into()));
@@ -1445,7 +1481,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                 let var_size = semantic_metadata
                     .types
                     .get(*type_symbol)
-                    .get_size(semantic_metadata);
+                    .get_size(semantic_metadata)
+                    .expect("size is expected");
                 match pass_mode {
                     VarPassMode::Val => {
                         let source_op = match semantic_metadata.var_types.get(expr).unwrap() {
@@ -1562,11 +1599,13 @@ impl<'a, W: Write> Compiler<'a, W> {
         let left_size = semantic_metadata
             .get_expr_type(&left)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .unwrap();
         let right_size = semantic_metadata
             .get_expr_type(&right)
             .unwrap()
-            .get_size(semantic_metadata);
+            .get_size(semantic_metadata)
+            .expect("size is epxected");
         let expr_size = right_size.max(left_size);
         self.visit_expr(&left, tree, semantic_metadata)?;
         self.visit_expr(&right, tree, semantic_metadata)?;

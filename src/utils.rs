@@ -167,20 +167,18 @@ pub(crate) use define_ref;
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 #[allow(dead_code)]
 pub enum Size {
+    Bytes(usize),
     S8bit,
     S16bit,
     S32bit,
     S64bit,
     S128bit,
-    Null,
-    Unkown,
 }
 
 impl Size {
     pub fn to_bytes(&self) -> usize {
         match self {
-            Self::Null => 0,
-            Self::Unkown => 8,
+            &Self::Bytes(b) => b,
             Self::S8bit => 1,
             Self::S16bit => 2,
             Self::S32bit => 4,
