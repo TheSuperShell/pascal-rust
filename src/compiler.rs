@@ -614,6 +614,70 @@ struct ActivationRecord<'a> {
     local_variables: Vec<(String, Size)>,
 }
 
+impl<'a> ActivationRecord<'a> {
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.local_variables
+            .iter()
+            .fold(0, |v, (_, size)| v + size.to_bytes())
+    }
+
+    #[inline]
+    pub fn aligned_size(&self) -> usize {
+        ((self.size() + 15) / 16) * 16
+    }
+
+    #[inline]
+    pub fn get_variable_offset(&self, var_name: &str) -> Option<(usize, Size)> {
+        let mut sum = 0;
+        self.local_variables.iter().rev().find_map(|(n, size)| {
+            if n == var_name {
+                Some((sum, *size))
+            } else {
+                sum += size.to_bytes();
+                None
+            }
+        })
+    }
+}
+
+const AR_VAR_STR: &'static str = "== Activation Record Contents ==";
+static AR_VAR_SEP: LazyLock<String> = LazyLock::new(|| "-".repeat(55));
+
+impl<'a> Display for ActivationRecord<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let header = format!(
+            "Activation Record {} - level {}",
+            self.scope_name, self.scope_level
+        );
+        let header_length = header.len();
+        let sep = "=".repeat(header_length);
+        writeln!(f, "{header}")?;
+        writeln!(f, "{sep}")?;
+        writeln!(f, ">   total size: {:>4} bytes", self.size())?;
+        writeln!(f, "> aligned size: {:>4} bytes", self.aligned_size())?;
+        if self.local_variables.len() > 0 {
+            writeln!(f, "{AR_VAR_STR}")?;
+            self.local_variables
+                .iter()
+                .try_for_each(|(var_name, size)| {
+                    writeln!(f, "{}", var_name)?;
+                    writeln!(f, "  |   size: {:>3} bytes |", size.to_bytes())?;
+                    writeln!(
+                        f,
+                        "  | offset: {:>3} bytes |",
+                        self.get_variable_offset(var_name).unwrap().0
+                    )
+                })?;
+            writeln!(f, "{}", AR_VAR_SEP.as_str())?;
+        } else {
+            let sep = "-".repeat(header_length);
+            writeln!(f, "{sep}")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CallStack<'a> {
     stack: Vec<ActivationRecord<'a>>,
@@ -643,7 +707,6 @@ impl<'a> CallStack<'a> {
     pub fn pop_ar(&mut self) {
         if let Some(ar) = self.stack.last() {
             debug!(target: "pascal::compiler", "Leaving {} scope", ar.scope_name);
-            debug!(target: "pascal::compiler", "{:?}", ar.local_variables);
         }
         self.stack.pop().unwrap();
         if let Some(ar) = self.stack.last() {
@@ -671,57 +734,38 @@ impl<'a> CallStack<'a> {
 
     #[inline]
     pub fn lookup_var_mem<'s>(&self, name: &'s str) -> StackMemory<'s> {
-        let mut sum = 0;
         self.stack
             .last()
             .unwrap()
-            .local_variables
-            .iter()
-            .rev()
-            .find_map(|(n, size)| {
-                let size_bytes = size.to_bytes();
-                if n == name {
-                    Some((sum + size_bytes, size))
-                } else {
-                    sum += size_bytes;
-                    None
-                }
+            .get_variable_offset(name)
+            .map(|(offset, size)| {
+                Register::Rbp
+                    .with_offset(size, offset + size.to_bytes())
+                    .into()
             })
-            .map(|(offset, size)| Register::Rbp.with_offset(*size, offset).into())
             .unwrap()
     }
 
     #[inline]
     pub fn lookup_var_addr<'s>(&self, name: &'s str) -> StackMemory<'a> {
-        let mut sum = 0;
         self.stack
             .last()
             .unwrap()
-            .local_variables
-            .iter()
-            .rev()
-            .find_map(|(n, size)| {
-                if n == name {
-                    Some((sum + 8, Size::S64bit))
-                } else {
-                    sum += size.to_bytes();
-                    None
-                }
-            })
-            .map(|(offset, size)| Register::Rbp.with_offset(size, offset).into())
+            .get_variable_offset(name)
+            .map(|(offset, size)| Register::Rbp.with_offset(size, offset + 8).into())
             .unwrap()
     }
 
     #[inline]
-    pub fn aligned_size(&self) -> usize {
-        let total_var_size = self
-            .stack
-            .last()
-            .unwrap()
-            .local_variables
-            .iter()
-            .fold(0, |v, (_, size)| v + size.to_bytes());
-        ((total_var_size + 15) / 16) * 16
+    pub fn aligned_size(&self) -> Option<usize> {
+        self.stack.last().map(|ar| ar.aligned_size())
+    }
+}
+
+impl<'a> Display for CallStack<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "CALL STACK")?;
+        self.stack.iter().try_for_each(|ar| writeln!(f, "{ar}"))
     }
 }
 
@@ -895,7 +939,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 .unwrap();
             self.call_stack.push_var("result", return_size);
         }
-        let local_size = self.call_stack.aligned_size();
+        let local_size = self.call_stack.aligned_size().unwrap();
         self.enter_func(32 + local_size)?;
         param_names
             .iter()
@@ -929,6 +973,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             });
             Ok::<(), Error>(())
         })?;
+        debug!(target: "pascal::compiler", "{}", self.call_stack);
         self.visit_stmt(statements, tree, semantic_metadata)?;
         if let Some(return_type) = return_type {
             let return_size = semantic_metadata
@@ -1039,7 +1084,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.comment("main entry point")?;
         self.asm.label("main")?;
         self.asm.comment("block")?;
-        let local_size = self.call_stack.aligned_size();
+        let local_size = self.call_stack.aligned_size().unwrap();
         self.enter_func(32 + local_size)?;
         self.visit_stmt(statements, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Xor {
