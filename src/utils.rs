@@ -182,6 +182,16 @@ pub enum Size {
 }
 
 impl Size {
+    pub fn get_element_size(&self) -> Option<&Size> {
+        match self {
+            Self::SArray {
+                element_size,
+                length: _,
+            } => Some(element_size),
+            _ => None,
+        }
+    }
+
     pub fn to_bytes(&self) -> usize {
         match self {
             Self::SArray {

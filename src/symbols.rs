@@ -43,6 +43,22 @@ pub enum TypeSymbol {
 }
 
 impl TypeSymbol {
+    pub fn get_limits(&self) -> Option<(i32, i32)> {
+        match self {
+            Self::Array {
+                start_ord_index,
+                end_ord_index,
+                ..
+            } => Some((*start_ord_index, *end_ord_index)),
+            Self::Range {
+                start_ord_index,
+                end_ord_index,
+                ..
+            } => Some((*start_ord_index, *end_ord_index)),
+            _ => None,
+        }
+    }
+
     pub fn get_size(&self, semantic_metadata: &SemanticMetadata) -> Option<Size> {
         match self {
             Self::Integer => Some(Size::S32bit),
