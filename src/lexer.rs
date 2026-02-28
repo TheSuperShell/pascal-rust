@@ -171,7 +171,15 @@ impl<'a> Lexer<'a> {
                     )),
                 }
             }
-            Some(c) if c.is_digit(10) => Ok(self.number()),
+            Some(c) if c == '-' => match self.peek() {
+                Some(c) if c.is_digit(10) => Ok(self.number()),
+                _ => Ok(Token::new(
+                    TokenType::Minus,
+                    self.previous_index(),
+                    1,
+                    self.pos.shift(1),
+                )),
+            },
             Some(c) if c == '\'' => Ok(self.string()),
             Some(c) if c.is_alphanumeric() || c == '_' => Ok(self.id()),
             _ => Err(Error::LexerError {
@@ -203,6 +211,11 @@ impl<'a> Lexer<'a> {
 
     fn number(&mut self) -> Token {
         let current_index = self.index;
+        if let Some(c) = self.current_char
+            && c == '-'
+        {
+            self.advance();
+        }
         while let Some(c) = self.current_char
             && c.is_digit(10)
         {

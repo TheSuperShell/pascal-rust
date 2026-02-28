@@ -181,7 +181,6 @@ impl TokenType {
         char_tokens.insert('[', TokenType::LBracket);
         char_tokens.insert(']', TokenType::RBracket);
         char_tokens.insert('+', TokenType::Plus);
-        char_tokens.insert('-', TokenType::Minus);
         char_tokens.insert('/', TokenType::IntegerDiv);
         char_tokens.insert('*', TokenType::Mul);
         char_tokens
