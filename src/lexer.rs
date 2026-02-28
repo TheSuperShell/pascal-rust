@@ -173,13 +173,17 @@ impl<'a> Lexer<'a> {
             }
             Some(c) if c == '-' => match self.peek() {
                 Some(c) if c.is_digit(10) => Ok(self.number()),
-                _ => Ok(Token::new(
-                    TokenType::Minus,
-                    self.previous_index(),
-                    1,
-                    self.pos.shift(1),
-                )),
+                _ => {
+                    self.advance();
+                    Ok(Token::new(
+                        TokenType::Minus,
+                        self.previous_index(),
+                        1,
+                        self.pos.shift(1),
+                    ))
+                }
             },
+            Some(c) if c.is_numeric() => Ok(self.number()),
             Some(c) if c == '\'' => Ok(self.string()),
             Some(c) if c.is_alphanumeric() || c == '_' => Ok(self.id()),
             _ => Err(Error::LexerError {
@@ -302,13 +306,15 @@ mod tests {
 
     #[test]
     fn test_lexer() {
-        const SOURCE_CODE: &'static str = "PROGRAM IN FOR 1.3212; { some comment }{another one}  'c' \\\\ other type of comments FOR i := 10\n 'hello'\n;;. >= : :=";
+        const SOURCE_CODE: &'static str = "PROGRAM IN FOR 1.3212; -10 - { some comment }{another one}  'c' \\\\ other type of comments FOR i := 10\n 'hello'\n;;. >= : :=";
         let expected = [
             TokenType::Program,
             TokenType::In,
             TokenType::For,
             TokenType::RealConst(1.3212),
             TokenType::Semi,
+            TokenType::IntegerConst(-10),
+            TokenType::Minus,
             TokenType::CharConst('c'),
             TokenType::StringConst,
             TokenType::Semi,
