@@ -1,12 +1,12 @@
 use crate::{
     error::Error,
-    interpreter::{BuiltinCtx, Value},
+    interpreter::BuiltinCtx,
     semantic_analyzer::SemanticMetadata,
     symbols::{
         BuiltinInput, CallableSymbol, CallableSymbolRef, CallableType, LValue, ParamInputMode,
         SymbolTable, TypeSymbol, TypeSymbolRef, VarPassMode, VarSymbol, VarSymbolRef,
     },
-    utils::NodePool,
+    utils::{NodePool, Value},
 };
 
 fn write(

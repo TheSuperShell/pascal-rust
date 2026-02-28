@@ -4,10 +4,10 @@ use std::{collections::HashMap, sync::LazyLock};
 use itertools::Itertools;
 use tracing::debug;
 
-use crate::utils::Size;
+use crate::utils::{Size, Value};
 use crate::{
     error::Error,
-    interpreter::{BuiltinCtx, Value},
+    interpreter::BuiltinCtx,
     parser::StmtRef,
     semantic_analyzer::SemanticMetadata,
     utils::{NodePool, define_ref},
@@ -25,8 +25,14 @@ pub enum TypeSymbol {
     Boolean,
     String,
     Char,
-    Range(TypeSymbolRef),
+    Range {
+        start_ord_index: i32,
+        end_ord_index: i32,
+        range_type: TypeSymbolRef,
+    },
     Array {
+        start_ord_index: i32,
+        end_ord_index: i32,
         index_type: TypeSymbolRef,
         value_type: TypeSymbolRef,
     },
@@ -44,10 +50,31 @@ impl TypeSymbol {
             Self::Real => Some(Size::S64bit),
             Self::Boolean => Some(Size::S8bit),
             Self::Char => Some(Size::S8bit),
-            Self::Range(sym) => semantic_metadata
+            Self::Range {
+                start_ord_index: _,
+                end_ord_index: _,
+                range_type,
+            } => semantic_metadata
                 .types
-                .get(*sym)
+                .get(*range_type)
                 .get_size(semantic_metadata),
+            Self::Array {
+                start_ord_index,
+                end_ord_index,
+                index_type: _,
+                value_type,
+            } => semantic_metadata
+                .types
+                .get(*value_type)
+                .get_size(semantic_metadata)
+                .map(|element_size| Size::SArray {
+                    element_size: Box::new(element_size),
+                    length: (end_ord_index - start_ord_index) as usize,
+                }),
+            Self::Enum(elements) => Some(Size::SArray {
+                element_size: Box::new(Size::S8bit),
+                length: elements.len(),
+            }),
             Self::Any => Some(Size::S64bit),
             _ => None,
         }
@@ -70,11 +97,28 @@ impl TypeSymbol {
 
     pub fn ordinal_rank(&self, value: &Value, semantic_metadata: &SemanticMetadata) -> i32 {
         match (self, value) {
-            (&Self::Range(t), _) => semantic_metadata
+            (
+                &Self::Range {
+                    start_ord_index: _,
+                    end_ord_index: _,
+                    range_type,
+                },
+                _,
+            ) => semantic_metadata
                 .types
-                .get(t)
+                .get(range_type)
                 .ordinal_rank(value, semantic_metadata),
-            (Self::Enum(_), &Value::Integer(i)) => i,
+            (Self::Enum(vals), Value::String(name)) => vals
+                .iter()
+                .enumerate()
+                .find_map(|(i, val)| {
+                    if val == name {
+                        return Some(i as i32);
+                    } else {
+                        return None;
+                    }
+                })
+                .unwrap(),
             (Self::Integer, &Value::Integer(i)) => i,
             (Self::Int64, &Value::Int64(i)) => i as i32,
             (Self::Char, &Value::Char(c)) => c as i32,
@@ -85,9 +129,16 @@ impl TypeSymbol {
 
     pub fn represent(&self, value: Option<&Value>, semantic_metadata: &SemanticMetadata) -> String {
         match (self, value) {
-            (&Self::Range(t), _) => semantic_metadata
+            (
+                &Self::Range {
+                    start_ord_index: _,
+                    end_ord_index: _,
+                    range_type,
+                },
+                _,
+            ) => semantic_metadata
                 .types
-                .get(t)
+                .get(range_type)
                 .represent(value, semantic_metadata),
             (Self::Integer, Some(Value::Integer(i))) => i.to_string(),
             (Self::Real, Some(Value::Real(r))) => r.to_string(),
@@ -115,8 +166,22 @@ impl TypeSymbol {
         right: &TypeSymbol,
     ) -> bool {
         match (left, right) {
-            (TypeSymbol::Range(t), _) => TypeSymbol::eq(node_pool, node_pool.get(*t), right),
-            (_, TypeSymbol::Range(t)) => TypeSymbol::eq(node_pool, left, node_pool.get(*t)),
+            (
+                TypeSymbol::Range {
+                    start_ord_index: _,
+                    end_ord_index: _,
+                    range_type: t,
+                },
+                _,
+            ) => TypeSymbol::eq(node_pool, node_pool.get(*t), right),
+            (
+                _,
+                TypeSymbol::Range {
+                    start_ord_index: _,
+                    end_ord_index: _,
+                    range_type: t,
+                },
+            ) => TypeSymbol::eq(node_pool, left, node_pool.get(*t)),
             (_, _) => left == right,
         }
     }
@@ -125,6 +190,8 @@ impl TypeSymbol {
             TypeSymbol::Boolean => "Boolean".into(),
             TypeSymbol::Any => "Any".into(),
             TypeSymbol::Array {
+                start_ord_index: _,
+                end_ord_index: _,
                 index_type,
                 value_type,
             } => format!(
@@ -150,11 +217,15 @@ impl TypeSymbol {
             TypeSymbol::Enum(..) => "Enum".into(),
             TypeSymbol::Integer => "Integer".into(),
             TypeSymbol::Int64 => "Int64".into(),
-            TypeSymbol::Range(value_type) => format!(
+            TypeSymbol::Range {
+                start_ord_index: _,
+                end_ord_index: _,
+                range_type,
+            } => format!(
                 "Range of {}",
                 semantic_metadata
                     .types
-                    .get(*value_type)
+                    .get(*range_type)
                     .to_string(semantic_metadata)
             ),
             TypeSymbol::Real => "Real".into(),

@@ -498,6 +498,7 @@ impl SemanticAnalyzer {
                     TypeSymbol::Array {
                         index_type: index_type_ref,
                         value_type,
+                        ..
                     } => {
                         let index_type = self.semantic_metadata.types.get(*index_type_ref);
                         if !TypeSymbol::eq(
@@ -518,7 +519,11 @@ impl SemanticAnalyzer {
                     }
                     TypeSymbol::DynamicArray(v) => {
                         let actual_index_type = match actual_index_type {
-                            &TypeSymbol::Range(t) => self.semantic_metadata.types.get(t),
+                            &TypeSymbol::Range {
+                                start_ord_index: _,
+                                end_ord_index: _,
+                                range_type: t,
+                            } => self.semantic_metadata.types.get(t),
                             _ => actual_index_type,
                         };
                         if !matches!(actual_index_type, TypeSymbol::Integer) {
@@ -615,15 +620,24 @@ impl SemanticAnalyzer {
             } => {
                 let index_type_ref = self.visit_type(*index_type, tree)?;
                 let index_type = self.semantic_metadata.types.get(index_type_ref);
-                if !matches!(index_type, TypeSymbol::Range(..)) {
-                    return Err(Error::SemanticError {
-                        msg: format!("array index type should be range, got {:?}", index_type),
-                        pos,
-                        error_code: ErrorCode::IncorrectIndexType,
-                    });
-                }
+                let (start_ord_index, end_ord_index) = match index_type {
+                    &TypeSymbol::Range {
+                        start_ord_index,
+                        end_ord_index,
+                        range_type: _,
+                    } => (start_ord_index, end_ord_index),
+                    _ => {
+                        return Err(Error::SemanticError {
+                            msg: format!("array index type should be range, got {:?}", index_type),
+                            pos,
+                            error_code: ErrorCode::IncorrectIndexType,
+                        });
+                    }
+                };
                 let element_type = self.visit_type(*element_type, tree)?;
                 Ok(TypeSymbol::Array {
+                    start_ord_index,
+                    end_ord_index,
                     index_type: index_type_ref,
                     value_type: element_type,
                 })
@@ -659,8 +673,20 @@ impl SemanticAnalyzer {
                         error_code: ErrorCode::RangeLimitsNotOrdinal,
                     });
                 }
+                let start_ord_index = start_val_type.ordinal_rank(
+                    &tree.expr_pool.get(*start_val).into_value(tree).unwrap(),
+                    &self.semantic_metadata,
+                );
+                let end_ord_index = start_val_type.ordinal_rank(
+                    &tree.expr_pool.get(*end_val).into_value(tree).unwrap(),
+                    &self.semantic_metadata,
+                );
 
-                Ok(TypeSymbol::Range(start_val_type_ref))
+                Ok(TypeSymbol::Range {
+                    start_ord_index,
+                    end_ord_index,
+                    range_type: start_val_type_ref,
+                })
             }
         }?;
         let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
@@ -1208,7 +1234,7 @@ mod tests {
             paren: TypeSymbol::Integer,
         },
         test_array -> {
-            range: TypeSymbol::Range(_),
+            range: TypeSymbol::Range{..},
             arr: TypeSymbol::Array{..},
             dyn_arr: TypeSymbol::DynamicArray(_)
         },

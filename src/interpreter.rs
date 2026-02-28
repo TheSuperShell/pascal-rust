@@ -6,9 +6,9 @@ use std::{
     ops::ControlFlow,
 };
 
-use itertools::Itertools;
 use tracing::debug;
 
+use crate::utils::Value;
 use crate::{
     error::{Error, ErrorCode},
     parser::{Condition, Decl, Expr, ExprRef, NodeRef, Stmt, StmtRef, Tree, Type, TypeRef},
@@ -28,36 +28,6 @@ pub enum Signal {
 }
 
 pub type Exec<T> = Result<ControlFlow<Signal, T>, Error>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    Array(Vec<Option<Box<Value>>>),
-    String(String),
-    Integer(i32),
-    Int64(i64),
-    Real(f32),
-    Char(char),
-    Boolean(bool),
-}
-
-impl ToString for Value {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Boolean(b) => b.to_string(),
-            Self::Char(c) => c.to_string(),
-            Self::Integer(i) => i.to_string(),
-            Self::Int64(i) => i.to_string(),
-            Self::Real(r) => r.to_string(),
-            Self::String(s) => s.into(),
-            Self::Array(vals) => format!(
-                "[{}]",
-                vals.iter()
-                    .map(|v| v.as_deref().map_or("None".to_string(), |v| v.to_string()))
-                    .join(", ")
-            ),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Ref {
@@ -365,10 +335,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                             .types
                             .get(*semantic_metadata.expr_type_map.get(base).unwrap());
                         let range_symbol = match arr_type {
-                            TypeSymbol::Array {
-                                index_type,
-                                value_type: _,
-                            } => self
+                            TypeSymbol::Array { index_type, .. } => self
                                 .range_symbols
                                 .get(*self.type_range_map.get(index_type).unwrap()),
                             _ => panic!(),

@@ -1,4 +1,4 @@
-use std::{hash::Hash, marker::PhantomData};
+use std::{fmt::Display, hash::Hash, marker::PhantomData};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pos {
@@ -163,11 +163,17 @@ macro_rules! define_ref {
 }
 
 pub(crate) use define_ref;
+use itertools::Itertools;
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+use crate::parser::{Expr, Tree};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Size {
-    Bytes(usize),
+    SArray {
+        element_size: Box<Size>,
+        length: usize,
+    },
     S8bit,
     S16bit,
     S32bit,
@@ -178,7 +184,10 @@ pub enum Size {
 impl Size {
     pub fn to_bytes(&self) -> usize {
         match self {
-            &Self::Bytes(b) => b,
+            Self::SArray {
+                element_size,
+                length,
+            } => element_size.to_bytes() * length,
             Self::S8bit => 1,
             Self::S16bit => 2,
             Self::S32bit => 4,
@@ -199,5 +208,70 @@ impl Ord for Size {
 impl PartialOrd for Size {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Array(Vec<Option<Box<Value>>>),
+    String(String),
+    Integer(i32),
+    Int64(i64),
+    Real(f32),
+    Char(char),
+    Boolean(bool),
+}
+
+impl Value {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Boolean(b) => b.to_string(),
+            Self::Char(c) => c.to_string(),
+            Self::Integer(i) => i.to_string(),
+            Self::Int64(i) => i.to_string(),
+            Self::Real(r) => r.to_string(),
+            Self::String(s) => s.into(),
+            Self::Array(vals) => format!(
+                "[{}]",
+                vals.iter()
+                    .map(|v| v.as_deref().map_or("None".to_string(), |v| v.to_string()))
+                    .join(", ")
+            ),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int64(i) => write!(f, "{i}"),
+            Value::Integer(i) => write!(f, "{i}"),
+            Value::Real(i) => write!(f, "{i}"),
+            Value::String(i) => write!(f, "{i}"),
+            Value::Boolean(b) => write!(
+                f,
+                "{}",
+                match b {
+                    true => 1,
+                    false => 0,
+                }
+            ),
+            Value::Char(c) => write!(f, "{c}"),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl Expr {
+    pub fn into_value(&self, tree: &Tree) -> Option<Value> {
+        match self {
+            &Expr::LiteralBool(b) => Some(Value::Boolean(b)),
+            &Expr::LiteralChar(c) => Some(Value::Char(c)),
+            &Expr::LiteralInt64(i) => Some(Value::Int64(i)),
+            &Expr::LiteralInteger(i) => Some(Value::Integer(i)),
+            &Expr::LiteralReal(r) => Some(Value::Real(r)),
+            &Expr::Var { name } => Some(Value::String(name.lexem(tree.source_code).into())),
+            _ => None,
+        }
     }
 }
