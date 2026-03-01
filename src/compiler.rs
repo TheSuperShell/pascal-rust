@@ -1231,9 +1231,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         let left_size = left_type.get_size(semantic_metadata).unwrap();
         let left_size = left_size.get_element_size().unwrap();
         let right_size = &semantic_metadata
-            .get_expr_type(right)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(right)
             .expect("size is expected");
         let pass_mode = semantic_metadata.get_var_pass_mode(base).unwrap();
         self.visit_expr(index_value, tree, semantic_metadata)?;
@@ -1260,16 +1258,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                         dst: Register::Rax.to_size(&left_size).into(),
                         src: Register::Rax.to_size(&right_size).into(),
                     });
-                    self.asm.push_cmd(Command::Mov {
-                        dst: source_op,
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
-                } else {
-                    self.asm.push_cmd(Command::Mov {
-                        dst: source_op,
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
                 }
+                self.asm.push_cmd(Command::Mov {
+                    dst: source_op,
+                    src: Register::Rax.to_size(&left_size).into(),
+                });
             }
             VarPassMode::Ref => todo!(),
         };
@@ -1286,14 +1279,10 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         let var_name = tree.get_var_name(left).unwrap();
         let left_size = semantic_metadata
-            .get_expr_type(left)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(left)
             .expect("size is epxected");
         let right_size = semantic_metadata
-            .get_expr_type(right)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(right)
             .expect("size is expected");
         let pass_mode = semantic_metadata.get_var_pass_mode(left).unwrap();
         self.visit_expr(right, tree, semantic_metadata)?;
@@ -1309,16 +1298,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                         dst: Register::Rax.to_size(&left_size).into(),
                         src: Register::Rax.to_size(&right_size).into(),
                     });
-                    self.asm.push_cmd(Command::Mov {
-                        dst: source_op,
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
-                } else {
-                    self.asm.push_cmd(Command::Mov {
-                        dst: source_op,
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
                 }
+                self.asm.push_cmd(Command::Mov {
+                    dst: source_op,
+                    src: Register::Rax.to_size(&left_size).into(),
+                });
             }
             VarPassMode::Ref => {
                 let var_addr = self.call_stack.lookup_var_addr(var_name);
@@ -1331,16 +1315,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                         dst: Register::Rax.to_size(&left_size).into(),
                         src: Register::Rax.to_size(&right_size).into(),
                     });
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
-                } else {
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
                 }
+                self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rbx.as_addr(left_size.clone()).into(),
+                    src: Register::Rax.to_size(&left_size).into(),
+                });
             }
         };
         Ok(())

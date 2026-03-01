@@ -8,7 +8,7 @@ use crate::{
         TypeSymbol, TypeSymbolRef, VarLocality, VarPassMode, VarSymbol, VarSymbolRef,
     },
     tokens::{Token, TokenType},
-    utils::NodePool,
+    utils::{NodePool, Size},
 };
 use tracing::{debug, info};
 
@@ -29,6 +29,10 @@ impl SemanticMetadata {
     pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
         self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
     }
+    pub fn get_expr_size(&self, expr_ref: &ExprRef) -> Option<Size> {
+        self.get_expr_type(expr_ref).and_then(|t| t.get_size(self))
+    }
+
     pub fn get_callable_symbol(&self, expr_ref: &ExprRef) -> Option<&CallableSymbol> {
         self.callable_symbols
             .get(expr_ref)
