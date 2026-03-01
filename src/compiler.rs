@@ -1697,6 +1697,10 @@ impl<'a, W: Write> Compiler<'a, W> {
                 value,
                 type_symbol: _,
             } => match value {
+                ConstValue::Int64(i) => self.asm.push_cmd(Command::Mov {
+                    dst: Register::Rax.into(),
+                    src: Register::Integer(*i).into(),
+                }),
                 ConstValue::Integer(i) => {
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rax.into(),
