@@ -4,7 +4,7 @@ use crate::{
     error::{Error, Result},
     parser::{Condition, Decl, Expr, ExprRef, Param, Stmt, StmtRef, Tree},
     semantic_analyzer::SemanticMetadata,
-    symbols::{ConstValue, TypeSymbolRef, VarLocality, VarPassMode, VarSymbol},
+    symbols::{ConstValue, TypeSymbol, TypeSymbolRef, VarLocality, VarPassMode, VarSymbol},
     tokens::TokenType,
     utils::Size,
 };
@@ -12,6 +12,7 @@ use std::io::Write;
 use std::{collections::HashMap, fmt::Display, sync::LazyLock};
 
 const STD_DIV0_ERROR: &'static str = "std.error.div0_error";
+const STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR: &'static str = "std.error.index_out_of_bounds_error";
 
 static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut map = HashMap::new();
@@ -1075,6 +1076,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.directive("section .text")?;
         self.asm.directive("global main")?;
         self.asm.external(STD_DIV0_ERROR)?;
+        self.asm.external(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR)?;
         self.asm.external(BUILTIN_CALLABLES.get("write").unwrap())?;
         self.asm
             .external(BUILTIN_CALLABLES.get("writeln").unwrap())?;
@@ -1183,6 +1185,42 @@ impl<'a, W: Write> Compiler<'a, W> {
     }
 
     #[inline]
+    fn setup_array_index(
+        &mut self,
+        base_type: &TypeSymbol,
+        index_size: &Size,
+        register: &'a Register,
+    ) -> Result<()> {
+        self.asm.push_cmd(Command::Pop(register.clone().into()));
+        let (start_ord_index, end_ord_index) = base_type.get_limits().unwrap();
+        if index_size < &Size::S64bit {
+            self.asm.push_cmd(Command::Movsx {
+                dst: register.clone(),
+                src: register.clone().to_size(index_size).into(),
+            });
+        }
+        self.asm.push_cmd(Command::Cmp {
+            op1: register.clone().to_size(index_size).into(),
+            op2: Register::Integer(start_ord_index).into(),
+        });
+        self.asm
+            .push_cmd(Command::Jl(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
+        self.asm.push_cmd(Command::Cmp {
+            op1: register.clone().to_size(index_size).into(),
+            op2: Register::Integer(end_ord_index).into(),
+        });
+        self.asm
+            .push_cmd(Command::Jg(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
+        if start_ord_index != 0 {
+            self.asm.push_cmd(Command::Sub {
+                dst: register.clone().to_size(index_size),
+                src: Register::Integer(start_ord_index),
+            });
+        }
+        Ok(())
+    }
+
+    #[inline]
     fn visit_assign_index(
         &mut self,
         base: &ExprRef,
@@ -1204,20 +1242,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.visit_expr(index_value, tree, semantic_metadata)?;
         self.visit_expr(right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-        self.asm.push_cmd(Command::Pop(Register::Rcx.into()));
-        let (start_ord_index, _) = left_type.get_limits().unwrap();
-        if right_size < &Size::S64bit {
-            self.asm.push_cmd(Command::Movsx {
-                dst: Register::Rcx,
-                src: Register::Rcx.to_size(right_size).into(),
-            });
-        }
-        if start_ord_index != 0 {
-            self.asm.push_cmd(Command::Sub {
-                dst: Register::Rcx.to_size(right_size),
-                src: Register::Integer(start_ord_index),
-            });
-        }
+        self.setup_array_index(left_type, right_size, &Register::Rcx)?;
         match pass_mode {
             VarPassMode::Val => {
                 self.asm.push_cmd(Command::Lea {
@@ -1554,36 +1579,16 @@ impl<'a, W: Write> Compiler<'a, W> {
         match arr_kind {
             VarPassMode::Val => {
                 let arr_name = tree.get_var_name(base).unwrap();
-                let arr_size = semantic_metadata
-                    .get_expr_type(base)
-                    .unwrap()
-                    .get_size(semantic_metadata)
-                    .unwrap();
+                let arr_type = semantic_metadata.get_expr_type(base).unwrap();
+                let arr_size = arr_type.get_size(semantic_metadata).unwrap();
                 let arr_element_size = arr_size.get_element_size().unwrap();
                 let right_size = semantic_metadata
                     .get_expr_type(index_value)
                     .unwrap()
                     .get_size(semantic_metadata)
                     .unwrap();
-                let (min_ord_index, _) = semantic_metadata
-                    .get_expr_type(base)
-                    .unwrap()
-                    .get_limits()
-                    .unwrap();
                 self.visit_expr(index_value, tree, semantic_metadata)?;
-                self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-                if right_size < Size::S64bit {
-                    self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax,
-                        src: Register::Rax.to_size(&right_size).into(),
-                    });
-                }
-                if min_ord_index != 0 {
-                    self.asm.push_cmd(Command::Sub {
-                        dst: Register::Rax.to_size(&right_size),
-                        src: Register::Integer(min_ord_index),
-                    });
-                }
+                self.setup_array_index(arr_type, &right_size, &Register::Rax)?;
                 self.asm.push_cmd(Command::Lea {
                     dst: Register::Rbx,
                     src: GlobalMemory::new(arr_name, Size::S64bit).into(),
@@ -2096,7 +2101,7 @@ mod tests {
         (
             $(
                 $name:ident ->
-                [$($first_err:literal$(,$err:literal)*$(,)?)?]
+                [$($first_err:literal$(,$err:literal)*$(,)?)?],
             )+
         ) => {
             $(
@@ -2134,6 +2139,10 @@ mod tests {
     }
 
     test_err! {
-        test_div0_error -> ["Runtime error: division by zero"]
+        test_div0_error -> ["Runtime error: division by zero"],
+        test_array_out_of_bounds_error1 -> ["Runtime error: array index is out of bounds"],
+        test_array_out_of_bounds_error2 -> ["Runtime error: array index is out of bounds"],
+        test_array_out_of_bounds_error3 -> ["Runtime error: array index is out of bounds"],
+        test_array_out_of_bounds_error4 -> ["Runtime error: array index is out of bounds"],
     }
 }
