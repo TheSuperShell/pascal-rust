@@ -31,7 +31,7 @@ static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLo
 /// - 8 bits: Al, Bl
 /// - 128 bits: Xmm0, Xmm1, Xmm2
 enum Register<'a> {
-    Integer(i32),
+    Integer(i64),
     Variable(&'a str),
 
     Rax,
@@ -897,7 +897,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         if aligned_size > 0 {
             self.asm.push_cmd(Command::Sub {
                 dst: Register::Rsp,
-                src: Register::Integer(aligned_size as i32),
+                src: Register::Integer(aligned_size as i64),
             });
         }
         Ok(())
@@ -1097,7 +1097,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         });
         self.asm.push_cmd(Command::Add {
             dst: Register::Rsp,
-            src: Register::Integer(32 + local_size as i32),
+            src: Register::Integer(32 + local_size as i64),
         });
         self.asm.push_cmd(Command::Leave);
         self.asm.push_cmd(Command::Ret);
@@ -1201,20 +1201,20 @@ impl<'a, W: Write> Compiler<'a, W> {
         }
         self.asm.push_cmd(Command::Cmp {
             op1: register.clone().to_size(index_size).into(),
-            op2: Register::Integer(start_ord_index).into(),
+            op2: Register::Integer(start_ord_index as i64).into(),
         });
         self.asm
             .push_cmd(Command::Jl(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
         self.asm.push_cmd(Command::Cmp {
             op1: register.clone().to_size(index_size).into(),
-            op2: Register::Integer(end_ord_index).into(),
+            op2: Register::Integer(end_ord_index as i64).into(),
         });
         self.asm
             .push_cmd(Command::Jg(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
         if start_ord_index != 0 {
             self.asm.push_cmd(Command::Sub {
                 dst: register.clone().to_size(index_size),
-                src: Register::Integer(start_ord_index),
+                src: Register::Integer(start_ord_index as i64),
             });
         }
         Ok(())
@@ -1548,7 +1548,8 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
         match tree.expr_pool.get(*expr) {
-            Expr::LiteralInteger(i) => self.visit_literal_integer(i),
+            Expr::LiteralInteger(i) => self.visit_literal_integer(*i as i64),
+            Expr::LiteralInt64(i) => self.visit_literal_integer(*i),
             Expr::LiteralBool(b) => self.visit_literal_bool(b),
             Expr::Var { .. } => self.visit_var(expr, semantic_metadata)?,
             Expr::UnaryOp { op, expr } => self.visit_unary_op(op, expr, tree, semantic_metadata)?,
@@ -1561,7 +1562,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 base,
                 index_value,
             } => self.visit_index(base, index_value, tree, semantic_metadata)?,
-            _ => todo!(),
+            _ => todo!("{:?}", tree.expr_pool.get(*expr)),
         };
         self.asm.push_cmd(Command::Push(Register::Rax.into()));
         Ok(())
@@ -1745,7 +1746,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 ConstValue::Integer(i) => {
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rax.into(),
-                        src: Register::Integer(*i).into(),
+                        src: Register::Integer(*i as i64).into(),
                     });
                 }
                 ConstValue::Boolean(b) => {
@@ -1765,10 +1766,10 @@ impl<'a, W: Write> Compiler<'a, W> {
     }
 
     #[inline]
-    fn visit_literal_integer(&mut self, i: &i32) {
+    fn visit_literal_integer(&mut self, i: i64) {
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.into(),
-            src: Register::Integer(*i).into(),
+            src: Register::Integer(i).into(),
         })
     }
 
@@ -2136,6 +2137,7 @@ mod tests {
         test_out -> ["30", "30"],
         test_recursive -> ["120"],
         test_array -> ["10", "0", "1", "2", "3", "4", "5"],
+        test_type_casting -> ["3000000001", "-1294967295"],
     }
 
     test_err! {
