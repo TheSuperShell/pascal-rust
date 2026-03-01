@@ -181,25 +181,28 @@ impl Size {
 #[derive(Debug, Clone, PartialEq)]
 struct GlobalMemory<'a> {
     name: &'a str,
-    size: Size,
+    size: Option<Size>,
 }
 
 impl<'a> GlobalMemory<'a> {
     pub fn new(name: &'a str, size: Size) -> Self {
-        Self { name, size }
+        Self {
+            name,
+            size: Some(size),
+        }
+    }
+
+    pub fn new_ptr(name: &'a str) -> Self {
+        Self { name, size: None }
     }
 }
 
 impl<'a> Display for GlobalMemory<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} [rel {}]",
-            self.size
-                .word()
-                .expect("cannot access global memory for this size"),
-            self.name
-        )
+        if let Some(size) = &self.size {
+            write!(f, "{} ", size.word().unwrap())?;
+        }
+        write!(f, "[{}]", self.name)
     }
 }
 
@@ -1029,6 +1032,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
         debug!(target: "pascal::compiler", "Entering global scope");
+        self.asm.directive("default rel")?;
         self.asm.directive("section .data")?;
         let global_vars = declarations
             .iter()
@@ -1247,7 +1251,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             VarPassMode::Val => {
                 self.asm.push_cmd(Command::Lea {
                     dst: Register::Rbx,
-                    src: GlobalMemory::new(var_name, Size::S64bit).into(),
+                    src: GlobalMemory::new_ptr(var_name).into(),
                 });
                 let source_op = match semantic_metadata.var_types.get(base).unwrap() {
                     VarLocality::Local => todo!(),
@@ -1274,29 +1278,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     });
                 }
             }
-            VarPassMode::Ref => {
-                todo!();
-                let var_addr = self.call_stack.lookup_var_addr(var_name);
-                self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbx.into(),
-                    src: var_addr.into(),
-                });
-                if left_size > right_size {
-                    self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(&left_size).into(),
-                        src: Register::Rax.to_size(&right_size).into(),
-                    });
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
-                } else {
-                    self.asm.push_cmd(Command::Mov {
-                        dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                        src: Register::Rax.to_size(&left_size).into(),
-                    });
-                }
-            }
+            VarPassMode::Ref => todo!(),
         };
         Ok(())
     }
@@ -1592,7 +1574,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 self.setup_array_index(arr_type, &right_size, &Register::Rax)?;
                 self.asm.push_cmd(Command::Lea {
                     dst: Register::Rbx,
-                    src: GlobalMemory::new(arr_name, Size::S64bit).into(),
+                    src: GlobalMemory::new_ptr(arr_name).into(),
                 });
                 self.asm.push_cmd(Command::Mov {
                     dst: Register::Rax.to_size(arr_element_size).into(),
