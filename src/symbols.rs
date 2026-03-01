@@ -85,7 +85,7 @@ impl TypeSymbol {
                 .get_size(semantic_metadata)
                 .map(|element_size| Size::SArray {
                     element_size: Box::new(element_size),
-                    length: (end_ord_index - start_ord_index) as usize,
+                    length: 1 + (end_ord_index - start_ord_index) as usize,
                 }),
             Self::Enum(elements) => Some(Size::SArray {
                 element_size: Box::new(Size::S8bit),

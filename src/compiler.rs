@@ -1206,16 +1206,16 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Pop(Register::Rcx.into()));
         let (start_ord_index, _) = left_type.get_limits().unwrap();
-        if start_ord_index != 0 {
-            self.asm.push_cmd(Command::Sub {
-                dst: Register::Rcx.to_size(right_size),
-                src: Register::Integer(start_ord_index),
-            });
-        }
         if right_size < &Size::S64bit {
             self.asm.push_cmd(Command::Movsx {
                 dst: Register::Rcx,
                 src: Register::Rcx.to_size(right_size).into(),
+            });
+        }
+        if start_ord_index != 0 {
+            self.asm.push_cmd(Command::Sub {
+                dst: Register::Rcx.to_size(right_size),
+                src: Register::Integer(start_ord_index),
             });
         }
         match pass_mode {
@@ -1565,12 +1565,23 @@ impl<'a, W: Write> Compiler<'a, W> {
                     .unwrap()
                     .get_size(semantic_metadata)
                     .unwrap();
+                let (min_ord_index, _) = semantic_metadata
+                    .get_expr_type(base)
+                    .unwrap()
+                    .get_limits()
+                    .unwrap();
                 self.visit_expr(index_value, tree, semantic_metadata)?;
                 self.asm.push_cmd(Command::Pop(Register::Rax.into()));
                 if right_size < Size::S64bit {
                     self.asm.push_cmd(Command::Movsx {
                         dst: Register::Rax,
                         src: Register::Rax.to_size(&right_size).into(),
+                    });
+                }
+                if min_ord_index != 0 {
+                    self.asm.push_cmd(Command::Sub {
+                        dst: Register::Rax.to_size(&right_size),
+                        src: Register::Integer(min_ord_index),
                     });
                 }
                 self.asm.push_cmd(Command::Lea {
@@ -2119,7 +2130,7 @@ mod tests {
         test_functions -> ["-10", "25"],
         test_out -> ["30", "30"],
         test_recursive -> ["120"],
-        test_array -> ["10"],
+        test_array -> ["10", "0", "1", "2", "3", "4", "5"],
     }
 
     test_err! {
