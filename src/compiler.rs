@@ -230,7 +230,7 @@ impl<'a> Display for IndexMemory<'a> {
 struct StackMemory<'a> {
     base: Register<'a>,
     offset: usize,
-    size: Size,
+    size: Option<Size>,
 }
 
 impl<'a> StackMemory<'a> {
@@ -238,7 +238,7 @@ impl<'a> StackMemory<'a> {
         Self {
             base,
             offset: 0,
-            size: size,
+            size: Some(size),
         }
     }
 
@@ -250,21 +250,14 @@ impl<'a> StackMemory<'a> {
 
 impl Display for StackMemory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.offset {
-            0 => write!(
-                f,
-                "{} [{}]",
-                self.size.word().expect("cannot access stack for this size"),
-                self.base
-            ),
-            _ => write!(
-                f,
-                "{} [{} - {}]",
-                self.size.word().expect("cannot access stack for this size"),
-                self.base,
-                self.offset
-            ),
+        if let Some(size) = &self.size {
+            write!(f, "{} ", size.word().unwrap())?;
         }
+        write!(f, "[{}", self.base)?;
+        if self.offset > 0 {
+            write!(f, " - {}", self.offset)?;
+        }
+        write!(f, "]")
     }
 }
 
@@ -273,7 +266,7 @@ impl<'a> Register<'a> {
         StackMemory {
             base: self,
             offset: 0,
-            size: size,
+            size: Some(size),
         }
     }
 }
@@ -1335,12 +1328,12 @@ impl<'a, W: Write> Compiler<'a, W> {
                 });
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rdx.to_size(&left_size).into(),
+                        dst: Register::Rax.to_size(&left_size).into(),
                         src: Register::Rax.to_size(&right_size).into(),
                     });
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                        src: Register::Rdx.to_size(&left_size).into(),
+                        src: Register::Rax.to_size(&left_size).into(),
                     });
                 } else {
                     self.asm.push_cmd(Command::Mov {
