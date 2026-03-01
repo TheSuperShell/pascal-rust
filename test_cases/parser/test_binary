@@ -1,0 +1,24 @@
+Program n
+
+Begin
+  Assign
+    Var(res)
+    BinOp
+      BinOp
+        LitInt(10)
+        Mul
+        BinOp
+          Var(a)
+          Plus
+          BinOp
+            Var(b)
+            RealDiv
+            LitBool(true)
+      Minus
+      BinOp
+        LitReal(3.14)
+        Equal
+        BinOp
+          LitReal(2.7)
+          IntegerDiv
+          LitInt(2)

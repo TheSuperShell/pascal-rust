@@ -1,33 +1,19 @@
-program factorial;
-    const pi = 3.14;
-    type age = integer;
-        some_values = (
-            one,
-            two,
-            three
-        );
-    var my_age: age = 25;
-    function some_func(a, b: integer; out c: real): string;
+program fib;
+type days= (mon, tue, wen, thu, fri);
+    week= mon..fri;
+    function fib(val: integer): integer;
     begin
-        c := a + b;
-        exit('value' + c)
+        if val <= 2 then
+            exit(val);
+        exit(fib(val - 1) + fib(val - 2));
     end;
+    var i: integer;
+    var arr: array[mon..fri] of days;
+    var day: week;
 begin
-    a := (5 > 10) = true and b;
-    b := a;
-    c := some_fn('text' = 'other_text');
-    for a := 0 to 35 do
-        b := 10;
-    if a > b then
-        a := b
-    else if a < b then
-        a(b)
-    else
-        b := a;
-    while a <> b do
-        begin
-            a := true;
-            b := false;
-        end;
-    a := not b[1];
+    for i := 0 to 7 do
+        writeln('fib(', i, ') = ', fib(i));
+    for day := mon to fri do
+        arr[day] := day;
+    writeln(arr);
 end.

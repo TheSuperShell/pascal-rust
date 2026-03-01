@@ -1,0 +1,14 @@
+Program n
+Const
+  Var(a)
+    LitInt(1)
+Const
+  Var(b)
+    LitInt(10)
+Type
+  TypeAlias(r)
+    Type(Range)
+      Var(a)
+      Var(b)
+Begin
+  NoOp

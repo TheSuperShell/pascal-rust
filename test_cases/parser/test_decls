@@ -1,0 +1,21 @@
+Program n
+Const
+  Var(pi)
+    LitReal(3.14)
+Var
+  Var(a)
+    Type(Integer)
+Var
+  Var(b)
+    Type(Integer)
+Var
+  Var(c)
+    Type(Real)
+Var
+  Var(z)
+    Type(Char)
+Type
+  TypeAlias(zz)
+    TypeAlias(z)
+Begin
+  NoOp

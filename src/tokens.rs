@@ -1,9 +1,64 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
-#[derive(Debug, Clone)]
-pub enum Token {
+use crate::utils::{Pos, Span};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Token {
+    token_type: TokenType,
+    span: Span,
+    pos: Pos,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, start: u32, len: u32, pos: Pos) -> Self {
+        Self {
+            token_type,
+            span: Span::new(start, len),
+            pos,
+        }
+    }
+
+    pub fn token_type(&self) -> &TokenType {
+        &self.token_type
+    }
+
+    pub fn lexem<'a>(&self, src: &'a str) -> &'a str {
+        self.span.lexem(src)
+    }
+
+    pub fn pos(&self) -> Pos {
+        self.pos
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.token_type == other.token_type
+    }
+}
+
+impl Eq for Token {}
+
+impl Hash for Token {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.span.hash(state);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TokenType {
+    IntegerConst(i32),
+    Int64Const(i64),
+    RealConst(f32),
+    CharConst(char),
+    BooleanConst(bool),
     Program,
     Integer,
+    Int64,
     Real,
     Boolean,
     Char,
@@ -52,87 +107,82 @@ pub enum Token {
     RParen,
     LBracket,
     RBracket,
-    Id(String),
-    IntegerConst(i64),
-    RealConst(f64),
-    StringConst(String),
-    CharConst(char),
-    BooleanConst(bool),
+    Id,
+    StringConst,
     EOF,
 }
 
-impl PartialEq for Token {
+impl PartialEq for TokenType {
     fn eq(&self, other: &Self) -> bool {
         core::mem::discriminant(self) == core::mem::discriminant(other)
     }
 }
 
-impl Token {
+impl TokenType {
     pub fn is_compare_operator(&self) -> bool {
         matches!(
             self,
-            Token::LessEqual
-                | Token::LessThen
-                | Token::Equal
-                | Token::NotEqual
-                | Token::GreaterEqual
-                | Token::GreaterThen
+            TokenType::LessEqual
+                | TokenType::LessThen
+                | TokenType::Equal
+                | TokenType::NotEqual
+                | TokenType::GreaterEqual
+                | TokenType::GreaterThen
         )
     }
 
-    pub fn get_keywords() -> HashMap<String, Token> {
+    pub fn get_keywords() -> HashMap<String, TokenType> {
         let mut keywords = HashMap::new();
-        keywords.insert("PROGRAM".to_string(), Token::Program);
-        keywords.insert("INTEGER".to_string(), Token::Integer);
-        keywords.insert("REAL".to_string(), Token::Real);
-        keywords.insert("BOOLEAN".to_string(), Token::Boolean);
-        keywords.insert("CHAR".to_string(), Token::Char);
-        keywords.insert("STRING".to_string(), Token::String);
-        keywords.insert("DIV".to_string(), Token::IntegerDiv);
-        keywords.insert("BEGIN".to_string(), Token::Begin);
-        keywords.insert("END".to_string(), Token::End);
-        keywords.insert("VAR".to_string(), Token::Var);
-        keywords.insert("PROCEDURE".to_string(), Token::Procedure);
-        keywords.insert("FUNCTION".to_string(), Token::Function);
-        keywords.insert("IF".to_string(), Token::If);
-        keywords.insert("THEN".to_string(), Token::Then);
-        keywords.insert("ELSE".to_string(), Token::Else);
-        keywords.insert("WHILE".to_string(), Token::While);
-        keywords.insert("DO".to_string(), Token::Do);
-        keywords.insert("FOR".to_string(), Token::For);
-        keywords.insert("TO".to_string(), Token::To);
-        keywords.insert("CONTINUE".to_string(), Token::Continue);
-        keywords.insert("BREAK".to_string(), Token::Break);
-        keywords.insert("EXIT".to_string(), Token::Exit);
-        keywords.insert("TYPE".to_string(), Token::Type);
-        keywords.insert("CONST".to_string(), Token::Const);
-        keywords.insert("ARRAY".to_string(), Token::Array);
-        keywords.insert("OF".to_string(), Token::Of);
-        keywords.insert("IN".to_string(), Token::In);
-        keywords.insert("OUT".to_string(), Token::Out);
-        keywords.insert("DIV".to_string(), Token::RealDiv);
-        keywords.insert("AND".to_string(), Token::And);
-        keywords.insert("OR".to_string(), Token::Or);
-        keywords.insert("NOT".to_string(), Token::Not);
-        keywords.insert("TRUE".to_string(), Token::BooleanConst(true));
-        keywords.insert("FALSE".to_string(), Token::BooleanConst(false));
+        keywords.insert("PROGRAM".to_string(), TokenType::Program);
+        keywords.insert("INTEGER".to_string(), TokenType::Integer);
+        keywords.insert("INT64".to_string(), TokenType::Int64);
+        keywords.insert("REAL".to_string(), TokenType::Real);
+        keywords.insert("BOOLEAN".to_string(), TokenType::Boolean);
+        keywords.insert("CHAR".to_string(), TokenType::Char);
+        keywords.insert("STRING".to_string(), TokenType::String);
+        keywords.insert("BEGIN".to_string(), TokenType::Begin);
+        keywords.insert("END".to_string(), TokenType::End);
+        keywords.insert("VAR".to_string(), TokenType::Var);
+        keywords.insert("PROCEDURE".to_string(), TokenType::Procedure);
+        keywords.insert("FUNCTION".to_string(), TokenType::Function);
+        keywords.insert("IF".to_string(), TokenType::If);
+        keywords.insert("THEN".to_string(), TokenType::Then);
+        keywords.insert("ELSE".to_string(), TokenType::Else);
+        keywords.insert("WHILE".to_string(), TokenType::While);
+        keywords.insert("DO".to_string(), TokenType::Do);
+        keywords.insert("FOR".to_string(), TokenType::For);
+        keywords.insert("TO".to_string(), TokenType::To);
+        keywords.insert("CONTINUE".to_string(), TokenType::Continue);
+        keywords.insert("BREAK".to_string(), TokenType::Break);
+        keywords.insert("EXIT".to_string(), TokenType::Exit);
+        keywords.insert("TYPE".to_string(), TokenType::Type);
+        keywords.insert("CONST".to_string(), TokenType::Const);
+        keywords.insert("ARRAY".to_string(), TokenType::Array);
+        keywords.insert("OF".to_string(), TokenType::Of);
+        keywords.insert("IN".to_string(), TokenType::In);
+        keywords.insert("OUT".to_string(), TokenType::Out);
+        keywords.insert("DIV".to_string(), TokenType::RealDiv);
+        keywords.insert("AND".to_string(), TokenType::And);
+        keywords.insert("OR".to_string(), TokenType::Or);
+        keywords.insert("NOT".to_string(), TokenType::Not);
+        keywords.insert("TRUE".to_string(), TokenType::BooleanConst(true));
+        keywords.insert("FALSE".to_string(), TokenType::BooleanConst(false));
         keywords
     }
 
-    pub fn get_char_tokens() -> HashMap<char, Token> {
+    pub fn get_char_tokens() -> HashMap<char, TokenType> {
         let mut char_tokens = HashMap::new();
-        char_tokens.insert(',', Token::Comma);
-        char_tokens.insert('=', Token::Equal);
-        char_tokens.insert(';', Token::Semi);
-        char_tokens.insert('.', Token::Dot);
-        char_tokens.insert('(', Token::LParen);
-        char_tokens.insert(')', Token::RParen);
-        char_tokens.insert('[', Token::LBracket);
-        char_tokens.insert(']', Token::RBracket);
-        char_tokens.insert('+', Token::Plus);
-        char_tokens.insert('-', Token::Minus);
-        char_tokens.insert('/', Token::RealDiv);
-        char_tokens.insert('*', Token::Mul);
+        char_tokens.insert(',', TokenType::Comma);
+        char_tokens.insert('=', TokenType::Equal);
+        char_tokens.insert(';', TokenType::Semi);
+        char_tokens.insert('.', TokenType::Dot);
+        char_tokens.insert('(', TokenType::LParen);
+        char_tokens.insert(')', TokenType::RParen);
+        char_tokens.insert('[', TokenType::LBracket);
+        char_tokens.insert(']', TokenType::RBracket);
+        char_tokens.insert('+', TokenType::Plus);
+        char_tokens.insert('/', TokenType::IntegerDiv);
+        char_tokens.insert('*', TokenType::Mul);
         char_tokens
     }
 }

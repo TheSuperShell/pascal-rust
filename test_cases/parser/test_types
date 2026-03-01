@@ -1,0 +1,6 @@
+Program n
+Var
+  Var(a)
+    Type(Int64)
+Begin
+  NoOp

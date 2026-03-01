@@ -1,22 +1,71 @@
-mod error;
-mod lexer;
-mod parser;
-mod semantic_analyzer;
-mod symbols;
-mod tokens;
-mod utils;
+use clap::{Command, arg, command};
+use pascal_rust::{compile_into_file, interprete};
+use tracing::error;
+use tracing_subscriber::{EnvFilter, fmt};
 
-use lexer::Lexer;
-
-use crate::{parser::Parser, semantic_analyzer::SemanticAnalyzer};
+pub fn init_logging(stack: bool, scope: bool) {
+    let directives = format!(
+        "pascal=warn,pascal::semantic={},pascal::interp={},pascal::compiler={}",
+        match scope {
+            true => "debug",
+            false => "warn",
+        },
+        match stack {
+            true => "debug",
+            false => "warn",
+        },
+        match stack {
+            true => "debug",
+            false => "warn",
+        }
+    );
+    let filter = EnvFilter::new(directives);
+    fmt().with_env_filter(filter).compact().init();
+}
 
 fn main() {
-    let source_code = std::fs::read_to_string("examples/factorial.pas").expect("file should exist");
-    let lexer = Lexer::new(&source_code);
-    let mut parser = Parser::new(lexer).unwrap();
-    let tree = parser.parse().unwrap();
-    println!("{tree}");
-    let semantic_analyzer = SemanticAnalyzer::new();
-    let semantic_metadata = semantic_analyzer.analyze(&tree).unwrap();
-    println!("{:?}", semantic_metadata);
+    let cmd = command!()
+        .subcommand(
+            Command::new("compile")
+                .about("Compile a pascal file")
+                .arg(arg!(<path> "Path of the scrip"))
+                .arg(arg!(<target> "Compilation target"))
+                .arg(arg!(--scope "Turn on scope logging"))
+                .arg(arg!(--stack "Turn on stack logging")),
+        )
+        .subcommand(
+            Command::new("interp")
+                .about("Interperet a pascal file")
+                .arg(arg!(<path> "Path of the script"))
+                .arg(arg!(--scope "Turn on scope logging"))
+                .arg(arg!(--stack "Turn on stack logging")),
+        );
+    let help_message = cmd.get_about().cloned();
+    let matches = cmd.get_matches();
+    match matches.subcommand() {
+        Some(("compile", sub_m)) => {
+            init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
+            let path = sub_m.get_one::<String>("path").unwrap();
+            let target = sub_m.get_one::<String>("target").unwrap();
+            match compile_into_file(path, target) {
+                Err(e) => {
+                    error!(target: "pascal", "{e}");
+                    std::process::exit(1);
+                }
+                Ok(_) => {}
+            };
+        }
+        Some(("interp", sub_m)) => {
+            init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
+            let path = sub_m.get_one::<String>("path").unwrap();
+            match interprete(path) {
+                Err(e) => {
+                    error!(target: "pascal", "{e}");
+                    std::process::exit(1)
+                }
+                Ok(_) => {}
+            }
+        }
+        _ => println!("{}", help_message.unwrap_or_default()),
+    }
 }
