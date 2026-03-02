@@ -792,7 +792,7 @@ impl SemanticAnalyzer {
                 };
                 let callable_symbol = CallableSymbol {
                     name: name.lexem(tree.source_code).into(),
-                    params: params_vec.clone(),
+                    params: params_vec,
                     param_input_mode: ParamInputMode::Seq,
                     return_type,
                     body: CallableType::Custom { statement: *block },

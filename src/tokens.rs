@@ -131,42 +131,42 @@ impl TokenType {
         )
     }
 
-    pub fn get_keywords() -> HashMap<String, TokenType> {
+    pub fn get_keywords() -> HashMap<&'static str, TokenType> {
         let mut keywords = HashMap::new();
-        keywords.insert("PROGRAM".to_string(), TokenType::Program);
-        keywords.insert("INTEGER".to_string(), TokenType::Integer);
-        keywords.insert("INT64".to_string(), TokenType::Int64);
-        keywords.insert("REAL".to_string(), TokenType::Real);
-        keywords.insert("BOOLEAN".to_string(), TokenType::Boolean);
-        keywords.insert("CHAR".to_string(), TokenType::Char);
-        keywords.insert("STRING".to_string(), TokenType::String);
-        keywords.insert("BEGIN".to_string(), TokenType::Begin);
-        keywords.insert("END".to_string(), TokenType::End);
-        keywords.insert("VAR".to_string(), TokenType::Var);
-        keywords.insert("PROCEDURE".to_string(), TokenType::Procedure);
-        keywords.insert("FUNCTION".to_string(), TokenType::Function);
-        keywords.insert("IF".to_string(), TokenType::If);
-        keywords.insert("THEN".to_string(), TokenType::Then);
-        keywords.insert("ELSE".to_string(), TokenType::Else);
-        keywords.insert("WHILE".to_string(), TokenType::While);
-        keywords.insert("DO".to_string(), TokenType::Do);
-        keywords.insert("FOR".to_string(), TokenType::For);
-        keywords.insert("TO".to_string(), TokenType::To);
-        keywords.insert("CONTINUE".to_string(), TokenType::Continue);
-        keywords.insert("BREAK".to_string(), TokenType::Break);
-        keywords.insert("EXIT".to_string(), TokenType::Exit);
-        keywords.insert("TYPE".to_string(), TokenType::Type);
-        keywords.insert("CONST".to_string(), TokenType::Const);
-        keywords.insert("ARRAY".to_string(), TokenType::Array);
-        keywords.insert("OF".to_string(), TokenType::Of);
-        keywords.insert("IN".to_string(), TokenType::In);
-        keywords.insert("OUT".to_string(), TokenType::Out);
-        keywords.insert("DIV".to_string(), TokenType::RealDiv);
-        keywords.insert("AND".to_string(), TokenType::And);
-        keywords.insert("OR".to_string(), TokenType::Or);
-        keywords.insert("NOT".to_string(), TokenType::Not);
-        keywords.insert("TRUE".to_string(), TokenType::BooleanConst(true));
-        keywords.insert("FALSE".to_string(), TokenType::BooleanConst(false));
+        keywords.insert("PROGRAM", TokenType::Program);
+        keywords.insert("INTEGER", TokenType::Integer);
+        keywords.insert("INT64", TokenType::Int64);
+        keywords.insert("REAL", TokenType::Real);
+        keywords.insert("BOOLEAN", TokenType::Boolean);
+        keywords.insert("CHAR", TokenType::Char);
+        keywords.insert("STRING", TokenType::String);
+        keywords.insert("BEGIN", TokenType::Begin);
+        keywords.insert("END", TokenType::End);
+        keywords.insert("VAR", TokenType::Var);
+        keywords.insert("PROCEDURE", TokenType::Procedure);
+        keywords.insert("FUNCTION", TokenType::Function);
+        keywords.insert("IF", TokenType::If);
+        keywords.insert("THEN", TokenType::Then);
+        keywords.insert("ELSE", TokenType::Else);
+        keywords.insert("WHILE", TokenType::While);
+        keywords.insert("DO", TokenType::Do);
+        keywords.insert("FOR", TokenType::For);
+        keywords.insert("TO", TokenType::To);
+        keywords.insert("CONTINUE", TokenType::Continue);
+        keywords.insert("BREAK", TokenType::Break);
+        keywords.insert("EXIT", TokenType::Exit);
+        keywords.insert("TYPE", TokenType::Type);
+        keywords.insert("CONST", TokenType::Const);
+        keywords.insert("ARRAY", TokenType::Array);
+        keywords.insert("OF", TokenType::Of);
+        keywords.insert("IN", TokenType::In);
+        keywords.insert("OUT", TokenType::Out);
+        keywords.insert("DIV", TokenType::RealDiv);
+        keywords.insert("AND", TokenType::And);
+        keywords.insert("OR", TokenType::Or);
+        keywords.insert("NOT", TokenType::Not);
+        keywords.insert("TRUE", TokenType::BooleanConst(true));
+        keywords.insert("FALSE", TokenType::BooleanConst(false));
         keywords
     }
 

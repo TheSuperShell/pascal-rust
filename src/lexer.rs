@@ -6,7 +6,7 @@ use crate::{
 
 pub struct Lexer<'a> {
     char_tokens: std::collections::HashMap<char, TokenType>,
-    keywords: std::collections::HashMap<String, TokenType>,
+    keywords: std::collections::HashMap<&'static str, TokenType>,
     source_code: &'a str,
     index: usize,
     pos: Pos,
@@ -205,7 +205,7 @@ impl<'a> Lexer<'a> {
         Token::new(
             *self
                 .keywords
-                .get(&word.to_uppercase())
+                .get(word.to_uppercase().as_str())
                 .unwrap_or(&TokenType::Id),
             current_index as u32,
             word.len() as u32,

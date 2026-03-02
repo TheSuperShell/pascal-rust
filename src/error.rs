@@ -1,7 +1,6 @@
 use std::iter::once;
 
 use err_code::ErrorCode;
-use itertools::Itertools;
 
 use crate::utils::Pos;
 
@@ -160,15 +159,16 @@ impl Into<Result<()>> for Errors {
     }
 }
 
-impl Error {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::LexerError {
                 msg,
                 pos,
                 error_code,
             } => {
-                format!(
+                writeln!(
+                    f,
                     "Lexer Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -182,7 +182,8 @@ impl Error {
                 pos,
                 error_code,
             } => {
-                format!(
+                writeln!(
+                    f,
                     "Parser Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -196,7 +197,8 @@ impl Error {
                 pos,
                 error_code,
             } => {
-                format!(
+                writeln!(
+                    f,
                     "Semantic Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -210,7 +212,8 @@ impl Error {
                 pos,
                 error_code,
             } => {
-                format!(
+                writeln!(
+                    f,
                     "Runtime Error at row {} col {} ({}: {:?}): {}",
                     pos.row,
                     pos.col,
@@ -220,23 +223,21 @@ impl Error {
                 )
             }
             Error::BuiltinFunctionError { function_name, msg } => {
-                format!("Builtin function {function_name} error: {msg}")
+                writeln!(f, "Builtin function {} error: {}", function_name, msg)
             }
-            Error::IoError(e) => e.to_string(),
-            Error::FmtError(e) => e.to_string(),
+            Error::FmtError(e) => e.fmt(f),
+            Error::IoError(e) => e.fmt(f),
             Error::Errors(errs) => {
-                format!(
-                    "Errors:\n{}",
-                    errs.iter().map(|v| v.to_string()).join(",\n")
-                )
+                writeln!(f, "Errors:")?;
+                errs.iter().enumerate().try_for_each(|(i, v)| {
+                    write!(f, "- {}", v)?;
+                    if i < errs.len() - 1 {
+                        write!(f, ",")?;
+                    }
+                    writeln!(f)
+                })
             }
         }
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
     }
 }
 

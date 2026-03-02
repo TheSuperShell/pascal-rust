@@ -280,9 +280,9 @@ enum Memory<'a> {
 impl Display for Memory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Memory::StackMemory(mem) => write!(f, "{}", mem),
-            Memory::GlobalMemory(var) => write!(f, "{}", var),
-            Memory::IndexMemory(ind) => write!(f, "{}", ind),
+            Memory::StackMemory(mem) => mem.fmt(f),
+            Memory::GlobalMemory(var) => var.fmt(f),
+            Memory::IndexMemory(ind) => ind.fmt(f),
         }
     }
 }
@@ -314,8 +314,8 @@ enum Operand<'a> {
 impl Display for Operand<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Operand::Register(r) => write!(f, "{}", r),
-            Operand::Memory(mem) => write!(f, "{}", mem),
+            Operand::Register(r) => r.fmt(f),
+            Operand::Memory(mem) => mem.fmt(f),
         }
     }
 }
@@ -365,7 +365,7 @@ enum Label<'a> {
 impl<'a> Display for Label<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Name(name) => write!(f, "{}", name),
+            Self::Name(name) => name.fmt(f),
             Self::L { number, slug } => write!(f, ".L{}_{}", number, slug),
         }
     }
