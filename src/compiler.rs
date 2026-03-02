@@ -271,7 +271,7 @@ impl<'a> Register<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 enum Memory<'a> {
     StackMemory(StackMemory<'a>),
     GlobalMemory(GlobalMemory<'a>),
@@ -305,7 +305,7 @@ impl<'a> Into<Memory<'a>> for IndexMemory<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 enum Operand<'a> {
     Register(Register<'a>),
     Memory(Memory<'a>),
@@ -377,7 +377,7 @@ impl<'a> Into<Label<'a>> for &'a str {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 /// - Push(op) -> push op to the stack
 /// - Pop(op) -> pop value from the stack into op
@@ -532,30 +532,21 @@ impl<'a, W: Write> Assambler<'a, W> {
                     Some(Command::Pop(o4)),
                 ) => {
                     if o3 != o2 {
-                        optimized.push(Command::Mov {
-                            dst: o3.clone(),
-                            src: o2.clone(),
-                        });
+                        optimized.push(Command::Mov { dst: *o3, src: *o2 });
                     }
                     if o1 != o4 {
-                        optimized.push(Command::Mov {
-                            dst: o4.clone(),
-                            src: o1.clone(),
-                        });
+                        optimized.push(Command::Mov { dst: *o4, src: *o1 });
                     }
                     i += 4;
                 }
                 (Some(Command::Push(o1)), Some(Command::Pop(o2)), _, _) => {
                     if o1 != o2 {
-                        optimized.push(Command::Mov {
-                            dst: o2.clone(),
-                            src: o1.clone(),
-                        });
+                        optimized.push(Command::Mov { dst: *o2, src: *o1 });
                     }
                     i += 2;
                 }
                 _ => {
-                    optimized.push(self.commands[i].clone());
+                    optimized.push(self.commands[i]);
                     i += 1;
                 }
             }
@@ -1214,7 +1205,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .push_cmd(Command::Jg(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
         if start_ord_index != 0 {
             self.asm.push_cmd(Command::Sub {
-                dst: register.clone().to_size(index_size),
+                dst: register.to_size(index_size),
                 src: Register::Literal(start_ord_index as i64),
             });
         }
@@ -1397,7 +1388,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             op1: Register::Al.into(),
             op2: Register::Literal(0).into(),
         });
-        self.asm.push_cmd(Command::Je(loop_end_l.clone()));
+        self.asm.push_cmd(Command::Je(loop_end_l));
         self.visit_stmt(body, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Jmp(loop_l));
         self.asm.label(loop_end_l)?;
@@ -1425,7 +1416,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm
             .push_cmd(Command::Dec(Register::Rax.to_size(var_size)));
         self.asm.push_cmd(Command::Mov {
-            dst: var_mem.clone(),
+            dst: var_mem,
             src: Register::Rax.to_size(var_size).into(),
         });
         self.visit_expr(end, tree, semantic_metadata)?;
@@ -1437,7 +1428,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.label(l1)?;
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.to_size(var_size).into(),
-            src: var_mem.clone().into(),
+            src: var_mem.into(),
         });
         self.asm
             .push_cmd(Command::Inc(Register::Rax.to_size(var_size).into()));
