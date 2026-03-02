@@ -19,6 +19,7 @@ pub struct SemanticMetadata {
     pub callable_symbols: HashMap<ExprRef, CallableSymbolRef>,
     pub var_symbols: HashMap<ExprRef, VarSymbolRef>,
     pub var_types: HashMap<ExprRef, VarLocality>,
+    pub type_sizes: HashMap<TypeSymbolRef, Size>,
 
     pub types: NodePool<TypeSymbolRef, TypeSymbol>,
     pub vars: NodePool<VarSymbolRef, VarSymbol>,
@@ -29,8 +30,10 @@ impl SemanticMetadata {
     pub fn get_expr_type(&self, expr_ref: &ExprRef) -> Option<&TypeSymbol> {
         self.expr_type_map.get(expr_ref).map(|r| self.types.get(*r))
     }
-    pub fn get_expr_size(&self, expr_ref: &ExprRef) -> Option<Size> {
-        self.get_expr_type(expr_ref).and_then(|t| t.get_size(self))
+    pub fn get_expr_size(&self, expr_ref: &ExprRef) -> Option<&Size> {
+        self.expr_type_map
+            .get(expr_ref)
+            .and_then(|t| self.type_sizes.get(t))
     }
 
     pub fn get_callable_symbol(&self, expr_ref: &ExprRef) -> Option<&CallableSymbol> {
@@ -46,6 +49,15 @@ impl SemanticMetadata {
             VarSymbol::Var { pass_mode, .. } => Some(pass_mode),
             _ => None,
         })
+    }
+
+    fn alloc_type(&mut self, type_symbol: TypeSymbol) -> TypeSymbolRef {
+        let size = type_symbol.get_size(self);
+        let type_ref = self.types.alloc(type_symbol);
+        if let Some(size) = size {
+            self.type_sizes.insert(type_ref, size);
+        }
+        type_ref
     }
 
     #[cfg(test)]
@@ -100,6 +112,7 @@ impl SemanticAnalyzer {
             callable_symbols: HashMap::new(),
             var_symbols: HashMap::new(),
             var_types: HashMap::new(),
+            type_sizes: HashMap::new(),
         };
         debug!(target: "pascal::semantic", "{}", current_scope.to_string(&semantic_metadata));
         let current_scope = SymbolTable::new(1, "global", Some(Box::new(current_scope)));
@@ -204,7 +217,7 @@ impl SemanticAnalyzer {
                 match callable_expr {
                     Expr::Call { name, args } => {
                         self.visit_callable(&call, tree, name, args)?;
-                        let none_ref = self.semantic_metadata.types.alloc(TypeSymbol::Empty);
+                        let none_ref = self.semantic_metadata.alloc_type(TypeSymbol::Empty);
                         self.semantic_metadata.expr_type_map.insert(*call, none_ref);
                         Ok(())
                     }
@@ -556,7 +569,7 @@ impl SemanticAnalyzer {
                 return Ok(*base_type_ref);
             }
         }?;
-        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+        let type_symbol_ref = self.semantic_metadata.alloc_type(type_symbol);
         self.semantic_metadata
             .expr_type_map
             .insert(node, type_symbol_ref);
@@ -579,7 +592,7 @@ impl SemanticAnalyzer {
                         .map(|t| t.lexem(tree.source_code).to_string())
                         .collect(),
                 );
-                let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+                let type_symbol_ref = self.semantic_metadata.alloc_type(type_symbol);
                 let errors: Errors = items
                     .iter()
                     .map(|t| t.lexem(tree.source_code))
@@ -693,7 +706,7 @@ impl SemanticAnalyzer {
                 })
             }
         }?;
-        let type_symbol_ref = self.semantic_metadata.types.alloc(type_symbol);
+        let type_symbol_ref = self.semantic_metadata.alloc_type(type_symbol);
         self.semantic_metadata
             .type_type_map
             .insert(node, type_symbol_ref);

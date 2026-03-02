@@ -178,14 +178,14 @@ impl Size {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 struct GlobalMemory<'a> {
     name: &'a str,
-    size: Option<Size>,
+    size: Option<&'a Size>,
 }
 
 impl<'a> GlobalMemory<'a> {
-    pub fn new(name: &'a str, size: Size) -> Self {
+    pub fn new(name: &'a str, size: &'a Size) -> Self {
         Self {
             name,
             size: Some(size),
@@ -206,11 +206,11 @@ impl<'a> Display for GlobalMemory<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 struct IndexMemory<'a> {
     register: Register<'a>,
     index: Register<'a>,
-    size: Size,
+    size: &'a Size,
 }
 
 impl<'a> Display for IndexMemory<'a> {
@@ -226,15 +226,15 @@ impl<'a> Display for IndexMemory<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 struct StackMemory<'a> {
     base: Register<'a>,
     offset: usize,
-    size: Option<Size>,
+    size: Option<&'a Size>,
 }
 
 impl<'a> StackMemory<'a> {
-    pub fn new(base: Register<'a>, size: Size) -> Self {
+    pub fn new(base: Register<'a>, size: &'a Size) -> Self {
         Self {
             base,
             offset: 0,
@@ -262,7 +262,7 @@ impl Display for StackMemory<'_> {
 }
 
 impl<'a> Register<'a> {
-    pub fn as_addr(self, size: Size) -> StackMemory<'a> {
+    pub fn as_addr(self, size: &'a Size) -> StackMemory<'a> {
         StackMemory {
             base: self,
             offset: 0,
@@ -351,7 +351,7 @@ impl<'a> Into<Operand<'a>> for IndexMemory<'a> {
 }
 
 impl<'a> Register<'a> {
-    pub fn with_offset(self, size: Size, offset: usize) -> StackMemory<'a> {
+    pub fn with_offset(self, size: &'a Size, offset: usize) -> StackMemory<'a> {
         StackMemory::new(self, size).with_offset(offset)
     }
 }
@@ -652,7 +652,7 @@ impl<'a, W: Write> Assambler<'a, W> {
 struct ActivationRecord<'a> {
     scope_name: &'a str,
     scope_level: usize,
-    local_variables: Vec<(String, Size)>,
+    local_variables: Vec<(String, &'a Size)>,
 }
 
 impl<'a> ActivationRecord<'a> {
@@ -669,11 +669,11 @@ impl<'a> ActivationRecord<'a> {
     }
 
     #[inline]
-    pub fn get_variable_offset(&self, var_name: &str) -> Option<(usize, &Size)> {
+    pub fn get_variable_offset(&self, var_name: &'a str) -> Option<(usize, &'a Size)> {
         let mut sum = 0;
         self.local_variables.iter().rev().find_map(|(n, size)| {
             if n == var_name {
-                Some((sum, size))
+                Some((sum, *size))
             } else {
                 sum += size.to_bytes();
                 None
@@ -756,7 +756,7 @@ impl<'a> CallStack<'a> {
     }
 
     #[inline]
-    pub fn push_var(&mut self, name: &str, size: Size) {
+    pub fn push_var(&mut self, name: &str, size: &'a Size) {
         self.stack
             .last_mut()
             .unwrap()
@@ -770,30 +770,30 @@ impl<'a> CallStack<'a> {
             .last_mut()
             .unwrap()
             .local_variables
-            .push((name.into(), Size::S64bit));
+            .push((name.into(), &Size::S64bit));
     }
 
     #[inline]
-    pub fn lookup_var_mem<'s>(&self, name: &'s str) -> StackMemory<'s> {
+    pub fn lookup_var_mem(&self, name: &'a str) -> StackMemory<'a> {
         self.stack
             .last()
             .unwrap()
             .get_variable_offset(name)
             .map(|(offset, size)| {
                 Register::Rbp
-                    .with_offset(size.clone(), offset + size.to_bytes())
+                    .with_offset(size, offset + size.to_bytes())
                     .into()
             })
             .unwrap()
     }
 
     #[inline]
-    pub fn lookup_var_addr<'s>(&self, name: &'s str) -> StackMemory<'s> {
+    pub fn lookup_var_addr(&self, name: &'a str) -> StackMemory<'a> {
         self.stack
             .last()
             .unwrap()
             .get_variable_offset(name)
-            .map(|(offset, size)| Register::Rbp.with_offset(size.clone(), offset + 8).into())
+            .map(|(offset, size)| Register::Rbp.with_offset(size, offset + 8).into())
             .unwrap()
     }
 
@@ -863,14 +863,10 @@ impl<'a, W: Write> Compiler<'a, W> {
         var: &ExprRef,
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
-    ) -> Result<Option<(&'a str, Size, ExprRef)>> {
+    ) -> Result<Option<(&'a str, &'a Size, ExprRef)>> {
         let var_name = tree.get_var_name(var).unwrap();
-        let var_size = semantic_metadata
-            .get_expr_type(var)
-            .unwrap()
-            .get_size(semantic_metadata)
-            .unwrap();
-        self.call_stack.push_var(var_name, var_size.clone());
+        let var_size = semantic_metadata.get_expr_size(var).unwrap();
+        self.call_stack.push_var(var_name, var_size);
         Ok(default_value.map(|v| (var_name, var_size, v)))
     }
 
@@ -951,16 +947,12 @@ impl<'a, W: Write> Compiler<'a, W> {
             })
             .filter_map(Result::transpose)
             .collect::<Result<Vec<_>>>()?;
-        let param_names: Vec<(&str, Size, &VarPassMode)> = params
+        let param_names: Vec<(&str, &Size, &VarPassMode)> = params
             .iter()
             .map(|param| {
                 (
                     tree.get_var_name(&param.var).unwrap(),
-                    semantic_metadata
-                        .get_expr_type(&param.var)
-                        .unwrap()
-                        .get_size(semantic_metadata)
-                        .unwrap(),
+                    semantic_metadata.get_expr_size(&param.var).unwrap(),
                     semantic_metadata.get_var_pass_mode(&param.var).unwrap(),
                 )
             })
@@ -971,15 +963,11 @@ impl<'a, W: Write> Compiler<'a, W> {
                 if matches!(pass_mode, VarPassMode::Ref) {
                     self.call_stack.push_ptr(param_name);
                 } else {
-                    self.call_stack.push_var(param_name, size.clone());
+                    self.call_stack.push_var(param_name, size);
                 }
             });
         if let Some(return_type_ref) = return_type {
-            let return_size = semantic_metadata
-                .types
-                .get(return_type_ref)
-                .get_size(semantic_metadata)
-                .unwrap();
+            let return_size = semantic_metadata.type_sizes.get(&return_type_ref).unwrap();
             self.call_stack.push_var("result", return_size);
         }
         let local_size = self.call_stack.aligned_size().unwrap();
@@ -1019,13 +1007,9 @@ impl<'a, W: Write> Compiler<'a, W> {
         debug!(target: "pascal::compiler", "{}", self.call_stack);
         self.visit_stmt(statements, tree, semantic_metadata)?;
         if let Some(return_type) = return_type {
-            let return_size = semantic_metadata
-                .types
-                .get(return_type)
-                .get_size(semantic_metadata)
-                .unwrap();
+            let return_size = semantic_metadata.type_sizes.get(&return_type).unwrap();
             self.asm.push_cmd(Command::Mov {
-                dst: Register::Rax.to_size(&return_size).into(),
+                dst: Register::Rax.to_size(return_size).into(),
                 src: self.call_stack.lookup_var_mem("result").into(),
             });
         } else {
@@ -1062,9 +1046,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 } => (
                     tree.get_var_name(var).unwrap(),
                     semantic_metadata
-                        .get_expr_type(var)
-                        .unwrap()
-                        .get_size(semantic_metadata)
+                        .get_expr_size(var)
                         .expect("size is expected"),
                     default_value,
                 ),
@@ -1134,9 +1116,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Memory<'a> {
         let var_name = tree.get_var_name(var).unwrap();
         let var_size = semantic_metadata
-            .get_expr_type(var)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(var)
             .expect("size is expected");
         match semantic_metadata.var_types.get(var).unwrap() {
             VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
@@ -1252,7 +1232,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         let var_name = tree.get_var_name(base).unwrap();
         let left_type = semantic_metadata.get_expr_type(base).unwrap();
-        let left_size = left_type.get_size(semantic_metadata).unwrap();
+        let left_size = semantic_metadata.get_expr_size(base).unwrap();
         let left_size = left_size.get_element_size().unwrap();
         let right_size = &semantic_metadata
             .get_expr_size(right)
@@ -1273,7 +1253,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     VarLocality::Global => IndexMemory {
                         register: Register::Rbx,
                         index: Register::Rcx,
-                        size: left_size.clone(),
+                        size: left_size,
                     }
                     .into(),
                 };
@@ -1315,17 +1295,17 @@ impl<'a, W: Write> Compiler<'a, W> {
             VarPassMode::Val => {
                 let source_op = match semantic_metadata.var_types.get(left).unwrap() {
                     VarLocality::Local => self.call_stack.lookup_var_mem(var_name).into(),
-                    VarLocality::Global => GlobalMemory::new(var_name, left_size.clone()).into(),
+                    VarLocality::Global => GlobalMemory::new(var_name, left_size).into(),
                 };
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(&left_size).into(),
-                        src: Register::Rax.to_size(&right_size).into(),
+                        dst: Register::Rax.to_size(left_size).into(),
+                        src: Register::Rax.to_size(right_size).into(),
                     });
                 }
                 self.asm.push_cmd(Command::Mov {
                     dst: source_op,
-                    src: Register::Rax.to_size(&left_size).into(),
+                    src: Register::Rax.to_size(left_size).into(),
                 });
             }
             VarPassMode::Ref => {
@@ -1336,13 +1316,13 @@ impl<'a, W: Write> Compiler<'a, W> {
                 });
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(&left_size).into(),
-                        src: Register::Rax.to_size(&right_size).into(),
+                        dst: Register::Rax.to_size(left_size).into(),
+                        src: Register::Rax.to_size(right_size).into(),
                     });
                 }
                 self.asm.push_cmd(Command::Mov {
-                    dst: Register::Rbx.as_addr(left_size.clone()).into(),
-                    src: Register::Rax.to_size(&left_size).into(),
+                    dst: Register::Rbx.as_addr(left_size).into(),
+                    src: Register::Rax.to_size(left_size).into(),
                 });
             }
         };
@@ -1438,17 +1418,15 @@ impl<'a, W: Write> Compiler<'a, W> {
         let var_mem =
             Operand::Memory(self.get_variable_memory_address(var, tree, semantic_metadata));
         let var_size = semantic_metadata
-            .get_expr_type(var)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(var)
             .expect("size is expected");
         self.visit_expr(init, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm
-            .push_cmd(Command::Dec(Register::Rax.to_size(&var_size)));
+            .push_cmd(Command::Dec(Register::Rax.to_size(var_size)));
         self.asm.push_cmd(Command::Mov {
             dst: var_mem.clone(),
-            src: Register::Rax.to_size(&var_size).into(),
+            src: Register::Rax.to_size(var_size).into(),
         });
         self.visit_expr(end, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
@@ -1458,17 +1436,17 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.enter_loop(l1, l2);
         self.asm.label(l1)?;
         self.asm.push_cmd(Command::Mov {
-            dst: Register::Rax.to_size(&var_size).into(),
+            dst: Register::Rax.to_size(var_size).into(),
             src: var_mem.clone().into(),
         });
         self.asm
-            .push_cmd(Command::Inc(Register::Rax.to_size(&var_size).into()));
+            .push_cmd(Command::Inc(Register::Rax.to_size(var_size).into()));
         self.asm.push_cmd(Command::Mov {
             dst: var_mem.into(),
-            src: Register::Rax.to_size(&var_size).into(),
+            src: Register::Rax.to_size(var_size).into(),
         });
         self.asm.push_cmd(Command::Cmp {
-            op1: Register::Rax.to_size(&var_size).into(),
+            op1: Register::Rax.to_size(var_size).into(),
             op2: StackMemory::new(Register::Rsp, var_size).into(),
         });
         self.asm.push_cmd(Command::Jg(l2));
@@ -1559,13 +1537,9 @@ impl<'a, W: Write> Compiler<'a, W> {
             VarPassMode::Val => {
                 let arr_name = tree.get_var_name(base).unwrap();
                 let arr_type = semantic_metadata.get_expr_type(base).unwrap();
-                let arr_size = arr_type.get_size(semantic_metadata).unwrap();
+                let arr_size = semantic_metadata.get_expr_size(base).unwrap();
                 let arr_element_size = arr_size.get_element_size().unwrap();
-                let right_size = semantic_metadata
-                    .get_expr_type(index_value)
-                    .unwrap()
-                    .get_size(semantic_metadata)
-                    .unwrap();
+                let right_size = semantic_metadata.get_expr_size(index_value).unwrap();
                 self.visit_expr(index_value, tree, semantic_metadata)?;
                 self.setup_array_index(arr_type, &right_size, Register::Rax)?;
                 self.asm.push_cmd(Command::Lea {
@@ -1577,7 +1551,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     src: IndexMemory {
                         register: Register::Rbx,
                         index: Register::Rax,
-                        size: arr_element_size.clone(),
+                        size: arr_element_size,
                     }
                     .into(),
                 });
@@ -1630,17 +1604,15 @@ impl<'a, W: Write> Compiler<'a, W> {
                         let param_mode = symbol.pass_mode().unwrap();
                         let left_size = symbol.get_size(semantic_metadata).unwrap();
                         let right_size = semantic_metadata
-                            .get_expr_type(arg)
-                            .unwrap()
-                            .get_size(semantic_metadata)
+                            .get_expr_size(arg)
                             .expect("size is expected");
                         match param_mode {
                             VarPassMode::Val => {
-                                self.asm.push_cmd(Command::Pop(reg.clone().into()));
-                                if left_size > right_size {
+                                self.asm.push_cmd(Command::Pop(reg.into()));
+                                if &left_size > right_size {
                                     self.asm.push_cmd(Command::Movsx {
-                                        dst: reg.clone().into(),
-                                        src: reg.to_size(&right_size).into(),
+                                        dst: reg.into(),
+                                        src: reg.to_size(right_size).into(),
                                     });
                                 }
                             }
@@ -1689,18 +1661,17 @@ impl<'a, W: Write> Compiler<'a, W> {
                 type_symbol,
             } => {
                 let var_size = semantic_metadata
-                    .types
-                    .get(*type_symbol)
-                    .get_size(semantic_metadata)
+                    .type_sizes
+                    .get(type_symbol)
                     .expect("size is expected");
                 match pass_mode {
                     VarPassMode::Val => {
                         let source_op = match semantic_metadata.var_types.get(expr).unwrap() {
                             VarLocality::Local => self.call_stack.lookup_var_mem(name).into(),
-                            VarLocality::Global => GlobalMemory::new(name, var_size.clone()).into(),
+                            VarLocality::Global => GlobalMemory::new(name, var_size).into(),
                         };
                         self.asm.push_cmd(Command::Mov {
-                            dst: Register::Rax.to_size(&var_size).into(),
+                            dst: Register::Rax.to_size(var_size).into(),
                             src: source_op,
                         });
                     }
@@ -1711,8 +1682,8 @@ impl<'a, W: Write> Compiler<'a, W> {
                             src: var_mem.into(),
                         });
                         self.asm.push_cmd(Command::Mov {
-                            dst: Register::Rax.to_size(&var_size).into(),
-                            src: Register::Rax.as_addr(var_size.clone()).into(),
+                            dst: Register::Rax.to_size(var_size).into(),
+                            src: Register::Rax.as_addr(var_size).into(),
                         });
                     }
                 };
@@ -1777,16 +1748,14 @@ impl<'a, W: Write> Compiler<'a, W> {
     ) -> Result<()> {
         self.visit_expr(expr, tree, semantic_metadata)?;
         let var_size = semantic_metadata
-            .get_expr_type(expr)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(expr)
             .expect("expected to have size");
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         match op {
             TokenType::Plus => {}
             TokenType::Minus => {
                 self.asm
-                    .push_cmd(Command::Neg(Register::Rax.to_size(&var_size)));
+                    .push_cmd(Command::Neg(Register::Rax.to_size(var_size)));
             }
             TokenType::Not => {
                 self.asm.push_cmd(Command::Xor {
@@ -1812,49 +1781,43 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
-        let left_size = semantic_metadata
-            .get_expr_type(&left)
-            .unwrap()
-            .get_size(semantic_metadata)
-            .unwrap();
+        let left_size = semantic_metadata.get_expr_size(left).unwrap();
         let right_size = semantic_metadata
-            .get_expr_type(&right)
-            .unwrap()
-            .get_size(semantic_metadata)
+            .get_expr_size(right)
             .expect("size is epxected");
-        let expr_size = right_size.clone().max(left_size.clone());
+        let expr_size = right_size.max(left_size);
         self.visit_expr(&left, tree, semantic_metadata)?;
         self.visit_expr(&right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         if left_size > right_size {
             self.asm.push_cmd(Command::Movsx {
-                dst: Register::Rbx.to_size(&expr_size).into(),
-                src: Register::Rbx.to_size(&right_size).into(),
+                dst: Register::Rbx.to_size(expr_size).into(),
+                src: Register::Rbx.to_size(right_size).into(),
             });
         } else {
             self.asm.push_cmd(Command::Movsx {
-                dst: Register::Rax.to_size(&expr_size).into(),
-                src: Register::Rax.to_size(&left_size).into(),
+                dst: Register::Rax.to_size(expr_size).into(),
+                src: Register::Rax.to_size(left_size).into(),
             });
         }
         match op {
             TokenType::Plus => {
                 self.asm.push_cmd(Command::Add {
-                    dst: Register::Rax.to_size(&expr_size),
-                    src: Register::Rbx.to_size(&expr_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::Minus => {
                 self.asm.push_cmd(Command::Sub {
-                    dst: Register::Rax.to_size(&expr_size),
-                    src: Register::Rbx.to_size(&expr_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::Mul => {
                 self.asm.push_cmd(Command::Imul {
-                    dst: Register::Rax.to_size(&expr_size),
-                    src: Register::Rbx.to_size(&expr_size),
+                    dst: Register::Rax.to_size(expr_size),
+                    src: Register::Rbx.to_size(expr_size),
                 });
             }
             TokenType::IntegerDiv => {
@@ -1865,7 +1828,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 });
                 self.asm.push_cmd(Command::Jz(STD_DIV0_ERROR.into()));
                 self.asm
-                    .push_cmd(Command::IDiv(Register::Rbx.to_size(&expr_size)));
+                    .push_cmd(Command::IDiv(Register::Rbx.to_size(expr_size)));
             }
             TokenType::And => {
                 self.asm.push_cmd(Command::And {
@@ -1884,7 +1847,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             | TokenType::GreaterEqual
             | TokenType::GreaterThen
             | TokenType::LessThen
-            | TokenType::LessEqual => self.visit_comparison(&op, &expr_size)?,
+            | TokenType::LessEqual => self.visit_comparison(&op, expr_size)?,
             _ => unreachable!(),
         }
         Ok(())
@@ -1893,8 +1856,8 @@ impl<'a, W: Write> Compiler<'a, W> {
     #[inline]
     fn visit_comparison(&mut self, cmp_token: &TokenType, expr_size: &Size) -> Result<()> {
         self.asm.push_cmd(Command::Cmp {
-            op1: Register::Rax.to_size(&expr_size).into(),
-            op2: Register::Rbx.to_size(&expr_size).into(),
+            op1: Register::Rax.to_size(expr_size).into(),
+            op2: Register::Rbx.to_size(expr_size).into(),
         });
         match cmp_token {
             TokenType::Equal => {
