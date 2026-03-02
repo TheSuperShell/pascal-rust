@@ -356,6 +356,27 @@ impl<'a> Register<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Label<'a> {
+    Name(&'a str),
+    L { number: u16, slug: &'a str },
+}
+
+impl<'a> Display for Label<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Name(name) => write!(f, "{}", name),
+            Self::L { number, slug } => write!(f, ".L{}_{}", number, slug),
+        }
+    }
+}
+
+impl<'a> Into<Label<'a>> for &'a str {
+    fn into(self) -> Label<'a> {
+        Label::Name(self)
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 /// - Push(op) -> push op to the stack
@@ -436,14 +457,14 @@ enum Command<'a> {
         op1: Operand<'a>,
         op2: Operand<'a>,
     },
-    Je(String),
-    Jne(String),
-    Jg(String),
-    Jge(String),
-    Jl(String),
-    Jz(String),
-    Jle(String),
-    Jmp(String),
+    Je(Label<'a>),
+    Jne(Label<'a>),
+    Jg(Label<'a>),
+    Jge(Label<'a>),
+    Jl(Label<'a>),
+    Jz(Label<'a>),
+    Jle(Label<'a>),
+    Jmp(Label<'a>),
     Sete(Register<'a>),
     Setne(Register<'a>),
     Setg(Register<'a>),
@@ -606,7 +627,7 @@ impl<'a, W: Write> Assambler<'a, W> {
         writeln!(self.output, "extern {external_function_name}")
     }
 
-    pub fn label(&mut self, label: &str) -> std::io::Result<()> {
+    pub fn label(&mut self, label: Label<'a>) -> std::io::Result<()> {
         self.flush()?;
         writeln!(self.output, "{}:", label)
     }
@@ -793,9 +814,9 @@ impl<'a> Display for CallStack<'a> {
 pub struct Compiler<'a, W: Write> {
     asm: Assambler<'a, W>,
     call_stack: CallStack<'a>,
-    current_l_num: u64,
-    loop_exit_labels: Vec<String>,
-    loop_start_labels: Vec<String>,
+    current_l_num: u16,
+    loop_exit_labels: Vec<Label<'a>>,
+    loop_start_labels: Vec<Label<'a>>,
 }
 
 impl<'a, W: Write> Compiler<'a, W> {
@@ -816,15 +837,18 @@ impl<'a, W: Write> Compiler<'a, W> {
     }
 
     #[inline]
-    fn next_l(&mut self, slug: &str) -> String {
+    fn next_label(&mut self, slug: &'a str) -> Label<'a> {
         self.current_l_num += 1;
-        format!(".L{}_{slug}", self.current_l_num - 1)
+        Label::L {
+            number: self.current_l_num,
+            slug,
+        }
     }
 
     #[inline]
-    fn enter_loop(&mut self, start_label: &str, end_label: &str) {
-        self.loop_start_labels.push(start_label.to_string());
-        self.loop_exit_labels.push(end_label.to_string());
+    fn enter_loop(&mut self, start_label: Label<'a>, end_label: Label<'a>) {
+        self.loop_start_labels.push(start_label);
+        self.loop_exit_labels.push(end_label);
     }
 
     #[inline]
@@ -912,7 +936,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.call_stack.push_ar(scope_name);
         self.asm
             .comment(&format!("{scope_name} function entry point"))?;
-        self.asm.label(scope_name)?;
+        self.asm.label(scope_name.into())?;
         self.asm.comment("block")?;
         let defaults = declarations
             .iter()
@@ -1083,7 +1107,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .filter(|d| matches!(d, Decl::Callable { .. }))
             .try_for_each(|c| self.visit_callable_decl(c, tree, semantic_metadata))?;
         self.asm.comment("main entry point")?;
-        self.asm.label("main")?;
+        self.asm.label("main".into())?;
         self.asm.comment("block")?;
         let local_size = self.call_stack.aligned_size().unwrap();
         self.enter_func(32 + local_size)?;
@@ -1340,15 +1364,15 @@ impl<'a, W: Write> Compiler<'a, W> {
             op1: Register::Al.into(),
             op2: Register::Literal(0).into(),
         });
-        let mut else_l = self.next_l("else");
-        let end_l = self.next_l("endif");
-        self.asm.push_cmd(Command::Je(else_l.clone()));
+        let mut else_l = self.next_label("else");
+        let end_l = self.next_label("endif");
+        self.asm.push_cmd(Command::Je(else_l));
         self.visit_stmt(&cond.expr, tree, semantic_metadata)?;
         let mut elifs_iter = elifs.iter().peekable();
         while let Some(elif) = elifs_iter.next() {
-            self.asm.push_cmd(Command::Jmp(end_l.clone()));
-            self.asm.label(&else_l)?;
-            else_l = self.next_l("else");
+            self.asm.push_cmd(Command::Jmp(end_l));
+            self.asm.label(else_l)?;
+            else_l = self.next_label("else");
             self.visit_expr(&elif.cond, tree, semantic_metadata)?;
             self.asm.push_cmd(Command::Pop(Register::Rax.into()));
             self.asm.push_cmd(Command::Cmp {
@@ -1356,21 +1380,21 @@ impl<'a, W: Write> Compiler<'a, W> {
                 op2: Register::Literal(0).into(),
             });
             if elifs_iter.peek().is_some() || else_statement.is_some() {
-                self.asm.push_cmd(Command::Je(else_l.clone()));
+                self.asm.push_cmd(Command::Je(else_l));
             } else {
-                self.asm.push_cmd(Command::Je(end_l.clone()));
+                self.asm.push_cmd(Command::Je(end_l));
             }
             self.visit_stmt(&elif.expr, tree, semantic_metadata)?;
         }
         if let Some(else_stmt) = else_statement {
-            self.asm.push_cmd(Command::Jmp(end_l.clone()));
-            self.asm.label(&else_l)?;
+            self.asm.push_cmd(Command::Jmp(end_l));
+            self.asm.label(else_l)?;
             self.visit_stmt(else_stmt, tree, semantic_metadata)?;
-            self.asm.label(&end_l)?;
+            self.asm.label(end_l)?;
         } else if elifs.len() > 0 {
-            self.asm.label(&end_l)?;
+            self.asm.label(end_l)?;
         } else {
-            self.asm.label(&else_l)?;
+            self.asm.label(else_l)?;
         }
         Ok(())
     }
@@ -1383,10 +1407,10 @@ impl<'a, W: Write> Compiler<'a, W> {
         tree: &'a Tree,
         semantic_metadata: &'a SemanticMetadata,
     ) -> Result<()> {
-        let loop_l = self.next_l("while");
-        let loop_end_l = self.next_l("endwhile");
-        self.enter_loop(&loop_l, &loop_end_l);
-        self.asm.label(&loop_l)?;
+        let loop_l = self.next_label("while");
+        let loop_end_l = self.next_label("endwhile");
+        self.enter_loop(loop_l, loop_end_l);
+        self.asm.label(loop_l)?;
         self.visit_expr(cond, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Cmp {
@@ -1396,7 +1420,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.push_cmd(Command::Je(loop_end_l.clone()));
         self.visit_stmt(body, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Jmp(loop_l));
-        self.asm.label(&loop_end_l)?;
+        self.asm.label(loop_end_l)?;
         self.exit_loop();
         Ok(())
     }
@@ -1429,10 +1453,10 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.visit_expr(end, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Push(Register::Rax.into()));
-        let l1 = self.next_l("for_body");
-        let l2 = self.next_l("endfor");
-        self.enter_loop(&l1, &l2);
-        self.asm.label(&l1)?;
+        let l1 = self.next_label("for_body");
+        let l2 = self.next_label("endfor");
+        self.enter_loop(l1, l2);
+        self.asm.label(l1)?;
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.to_size(&var_size).into(),
             src: var_mem.clone().into(),
@@ -1447,10 +1471,10 @@ impl<'a, W: Write> Compiler<'a, W> {
             op1: Register::Rax.to_size(&var_size).into(),
             op2: StackMemory::new(Register::Rsp, var_size).into(),
         });
-        self.asm.push_cmd(Command::Jg(l2.clone()));
+        self.asm.push_cmd(Command::Jg(l2));
         self.visit_stmt(body, tree, semantic_metadata)?;
-        self.asm.push_cmd(Command::Jmp(l1.clone()));
-        self.asm.label(&l2)?;
+        self.asm.push_cmd(Command::Jmp(l1));
+        self.asm.label(l2)?;
         self.asm.push_cmd(Command::Pop(Register::Rdx.into()));
         self.exit_loop();
         Ok(())
@@ -1462,7 +1486,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .loop_exit_labels
             .last()
             .expect("break should not be outside of the loop");
-        self.asm.push_cmd(Command::Jmp(end_l.clone()));
+        self.asm.push_cmd(Command::Jmp(*end_l));
     }
 
     #[inline]
@@ -1471,7 +1495,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .loop_start_labels
             .last()
             .expect("continue should be within a loop");
-        self.asm.push_cmd(Command::Jmp(start_l.clone()));
+        self.asm.push_cmd(Command::Jmp(*start_l));
     }
 
     #[inline]
