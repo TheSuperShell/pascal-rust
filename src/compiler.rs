@@ -21,7 +21,7 @@ static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLo
     map
 });
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 /// - Rsp -> stack top pointer
 /// - Rbp -> stack base pointer
@@ -31,7 +31,7 @@ static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLo
 /// - 8 bits: Al, Bl
 /// - 128 bits: Xmm0, Xmm1, Xmm2
 enum Register<'a> {
-    Integer(i64),
+    Literal(i64),
     Variable(&'a str),
 
     Rax,
@@ -64,7 +64,7 @@ enum Register<'a> {
 impl<'a> Display for Register<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Register::Integer(i) => write!(f, "{i}"),
+            Register::Literal(i) => write!(f, "{i}"),
             Register::Variable(v) => write!(f, "{}", v),
             Register::Rax => write!(f, "rax"),
             Register::Rbx => write!(f, "rbx"),
@@ -94,7 +94,7 @@ impl<'a> Display for Register<'a> {
 impl PartialEq for Register<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Register::Integer(i1), Register::Integer(i2)) => i1 == i2,
+            (Register::Literal(i1), Register::Literal(i2)) => i1 == i2,
             (Register::Variable(v1), Register::Variable(v2)) => v1 == v2,
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
         }
@@ -113,7 +113,7 @@ impl<'a> Register<'a> {
     }
     pub fn to_size(&self, size: &Size) -> Self {
         match (self, size) {
-            (Self::Integer(i), _) => Self::Integer(*i),
+            (Self::Literal(i), _) => Self::Literal(*i),
             (Self::Variable(v), _) => Self::Variable(*v),
             (Register::Rax, Size::S64bit) => Self::Rax,
             (Register::Rax, Size::S8bit) => Self::Al,
@@ -893,7 +893,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         if aligned_size > 0 {
             self.asm.push_cmd(Command::Sub {
                 dst: Register::Rsp,
-                src: Register::Integer(aligned_size as i64),
+                src: Register::Literal(aligned_size as i64),
             });
         }
         Ok(())
@@ -1094,7 +1094,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         });
         self.asm.push_cmd(Command::Add {
             dst: Register::Rsp,
-            src: Register::Integer(32 + local_size as i64),
+            src: Register::Literal(32 + local_size as i64),
         });
         self.asm.push_cmd(Command::Leave);
         self.asm.push_cmd(Command::Ret);
@@ -1186,32 +1186,32 @@ impl<'a, W: Write> Compiler<'a, W> {
         &mut self,
         base_type: &TypeSymbol,
         index_size: &Size,
-        register: &'a Register,
+        register: Register<'a>,
     ) -> Result<()> {
-        self.asm.push_cmd(Command::Pop(register.clone().into()));
+        self.asm.push_cmd(Command::Pop(register.into()));
         let (start_ord_index, end_ord_index) = base_type.get_limits().unwrap();
         if index_size < &Size::S64bit {
             self.asm.push_cmd(Command::Movsx {
-                dst: register.clone(),
-                src: register.clone().to_size(index_size).into(),
+                dst: register,
+                src: register.to_size(index_size).into(),
             });
         }
         self.asm.push_cmd(Command::Cmp {
-            op1: register.clone().to_size(index_size).into(),
-            op2: Register::Integer(start_ord_index as i64).into(),
+            op1: register.to_size(index_size).into(),
+            op2: Register::Literal(start_ord_index as i64).into(),
         });
         self.asm
             .push_cmd(Command::Jl(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
         self.asm.push_cmd(Command::Cmp {
-            op1: register.clone().to_size(index_size).into(),
-            op2: Register::Integer(end_ord_index as i64).into(),
+            op1: register.to_size(index_size).into(),
+            op2: Register::Literal(end_ord_index as i64).into(),
         });
         self.asm
             .push_cmd(Command::Jg(STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR.into()));
         if start_ord_index != 0 {
             self.asm.push_cmd(Command::Sub {
                 dst: register.clone().to_size(index_size),
-                src: Register::Integer(start_ord_index as i64),
+                src: Register::Literal(start_ord_index as i64),
             });
         }
         Ok(())
@@ -1237,7 +1237,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.visit_expr(index_value, tree, semantic_metadata)?;
         self.visit_expr(right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
-        self.setup_array_index(left_type, right_size, &Register::Rcx)?;
+        self.setup_array_index(left_type, right_size, Register::Rcx)?;
         match pass_mode {
             VarPassMode::Val => {
                 self.asm.push_cmd(Command::Lea {
@@ -1338,7 +1338,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Cmp {
             op1: Register::Al.into(),
-            op2: Register::Integer(0).into(),
+            op2: Register::Literal(0).into(),
         });
         let mut else_l = self.next_l("else");
         let end_l = self.next_l("endif");
@@ -1353,7 +1353,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             self.asm.push_cmd(Command::Pop(Register::Rax.into()));
             self.asm.push_cmd(Command::Cmp {
                 op1: Register::Al.into(),
-                op2: Register::Integer(0).into(),
+                op2: Register::Literal(0).into(),
             });
             if elifs_iter.peek().is_some() || else_statement.is_some() {
                 self.asm.push_cmd(Command::Je(else_l.clone()));
@@ -1391,7 +1391,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         self.asm.push_cmd(Command::Cmp {
             op1: Register::Al.into(),
-            op2: Register::Integer(0).into(),
+            op2: Register::Literal(0).into(),
         });
         self.asm.push_cmd(Command::Je(loop_end_l.clone()));
         self.visit_stmt(body, tree, semantic_metadata)?;
@@ -1543,7 +1543,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     .get_size(semantic_metadata)
                     .unwrap();
                 self.visit_expr(index_value, tree, semantic_metadata)?;
-                self.setup_array_index(arr_type, &right_size, &Register::Rax)?;
+                self.setup_array_index(arr_type, &right_size, Register::Rax)?;
                 self.asm.push_cmd(Command::Lea {
                     dst: Register::Rbx,
                     src: GlobalMemory::new_ptr(arr_name).into(),
@@ -1699,12 +1699,12 @@ impl<'a, W: Write> Compiler<'a, W> {
             } => match value {
                 ConstValue::Int64(i) => self.asm.push_cmd(Command::Mov {
                     dst: Register::Rax.into(),
-                    src: Register::Integer(*i).into(),
+                    src: Register::Literal(*i).into(),
                 }),
                 ConstValue::Integer(i) => {
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Rax.into(),
-                        src: Register::Integer(*i as i64).into(),
+                        src: Register::Literal(*i as i64).into(),
                     });
                 }
                 ConstValue::Boolean(b) => {
@@ -1714,7 +1714,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                     };
                     self.asm.push_cmd(Command::Mov {
                         dst: Register::Al.into(),
-                        src: Register::Integer(val).into(),
+                        src: Register::Literal(val).into(),
                     });
                 }
                 _ => todo!(),
@@ -1727,7 +1727,7 @@ impl<'a, W: Write> Compiler<'a, W> {
     fn visit_literal_integer(&mut self, i: i64) {
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.into(),
-            src: Register::Integer(i).into(),
+            src: Register::Literal(i).into(),
         })
     }
 
@@ -1739,7 +1739,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         };
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.into(),
-            src: Register::Integer(val).into(),
+            src: Register::Literal(val).into(),
         });
     }
 
@@ -1767,7 +1767,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             TokenType::Not => {
                 self.asm.push_cmd(Command::Xor {
                     dst: Register::Al,
-                    src: Register::Integer(1),
+                    src: Register::Literal(1),
                 });
                 self.asm.push_cmd(Command::Movzx {
                     dst: Register::Rax,
