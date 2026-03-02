@@ -643,7 +643,7 @@ impl<'a, W: Write> Assambler<'a, W> {
 struct ActivationRecord<'a> {
     scope_name: &'a str,
     scope_level: usize,
-    local_variables: Vec<(String, &'a Size)>,
+    local_variables: Vec<(&'a str, &'a Size)>,
 }
 
 impl<'a> ActivationRecord<'a> {
@@ -662,9 +662,9 @@ impl<'a> ActivationRecord<'a> {
     #[inline]
     pub fn get_variable_offset(&self, var_name: &'a str) -> Option<(usize, &'a Size)> {
         let mut sum = 0;
-        self.local_variables.iter().rev().find_map(|(n, size)| {
+        self.local_variables.iter().rev().find_map(|&(n, size)| {
             if n == var_name {
-                Some((sum, *size))
+                Some((sum, size))
             } else {
                 sum += size.to_bytes();
                 None
@@ -747,7 +747,7 @@ impl<'a> CallStack<'a> {
     }
 
     #[inline]
-    pub fn push_var(&mut self, name: &str, size: &'a Size) {
+    pub fn push_var(&mut self, name: &'a str, size: &'a Size) {
         self.stack
             .last_mut()
             .unwrap()
@@ -756,7 +756,7 @@ impl<'a> CallStack<'a> {
     }
 
     #[inline]
-    pub fn push_ptr(&mut self, name: &str) {
+    pub fn push_ptr(&mut self, name: &'a str) {
         self.stack
             .last_mut()
             .unwrap()
