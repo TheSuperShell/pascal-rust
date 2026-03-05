@@ -127,13 +127,7 @@ impl TypeSymbol {
             (Self::Enum(vals), Value::String(name)) => vals
                 .iter()
                 .enumerate()
-                .find_map(|(i, val)| {
-                    if val == name {
-                        return Some(i as i32);
-                    } else {
-                        return None;
-                    }
-                })
+                .find_map(|(i, val)| if val == name { Some(i as i32) } else { None })
                 .unwrap(),
             (Self::Integer, &Value::Integer(i)) => i,
             (Self::Int64, &Value::Int64(i)) => i as i32,
@@ -261,14 +255,14 @@ pub enum ConstValue {
     Boolean(bool),
 }
 
-impl Into<Value> for ConstValue {
-    fn into(self) -> Value {
-        match self {
+impl From<ConstValue> for Value {
+    fn from(value: ConstValue) -> Self {
+        match value {
             ConstValue::Int64(i) => Value::Int64(i),
             ConstValue::Integer(i) => Value::Integer(i),
             ConstValue::Boolean(b) => Value::Boolean(b),
             ConstValue::Char(c) => Value::Char(c),
-            ConstValue::String(s) => Value::String(s.into()),
+            ConstValue::String(s) => Value::String(s),
             ConstValue::Real(r) => Value::Real(r),
         }
     }
@@ -387,19 +381,16 @@ pub enum LValue<'a> {
 }
 
 pub type BuiltinInput<'a> = &'a [(LValue<'a>, &'a TypeSymbol)];
+pub type BuiltinFunc = fn(
+    ctx: &mut dyn BuiltinCtx<Value = Value>,
+    semantic_metadata: &SemanticMetadata,
+    args: BuiltinInput,
+) -> Result<Option<Value>, Error>;
 
 #[derive(Debug, Clone)]
 pub enum CallableType {
-    Custom {
-        statement: StmtRef,
-    },
-    Builtin {
-        func: fn(
-            ctx: &mut dyn BuiltinCtx<Value = Value>,
-            semantic_metadata: &SemanticMetadata,
-            args: BuiltinInput,
-        ) -> Result<Option<Value>, Error>,
-    },
+    Custom { statement: StmtRef },
+    Builtin { func: BuiltinFunc },
 }
 
 #[derive(Debug, Clone)]
@@ -465,8 +456,8 @@ pub struct SymbolTable {
     enclosing_scope: Option<Box<SymbolTable>>,
 }
 
-const H1: &'static str = "SCOPE (SCOPED SYMBOL TABLE)";
-const H2: &'static str = "Scope (SCOPED SYMBOL TABLE) contents";
+const H1: &str = "SCOPE (SCOPED SYMBOL TABLE)";
+const H2: &str = "Scope (SCOPED SYMBOL TABLE) contents";
 static EQ_H1: LazyLock<String> =
     LazyLock::new(|| vec!["="].into_iter().cycle().take(H1.len()).join(""));
 static EQ_H2: LazyLock<String> =

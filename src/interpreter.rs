@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::fmt::Display;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -49,11 +49,11 @@ impl Ref {
     }
 }
 
-impl ToString for Ref {
-    fn to_string(&self) -> String {
+impl Display for Ref {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.value {
-            None => "None".into(),
-            Some(v) => v.to_string(),
+            Some(v) => write!(f, "{}", v.repr()),
+            None => write!(f, "None"),
         }
     }
 }
@@ -65,19 +65,16 @@ pub struct ActivationRecord {
     nesting_level: usize,
 }
 
-impl ToString for ActivationRecord {
-    fn to_string(&self) -> String {
-        let mut buf = String::new();
+impl Display for ActivationRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
-            buf,
+            f,
             "Activation Record {} - {}",
             self.name, self.nesting_level
-        )
-        .unwrap();
+        )?;
         self.members
             .iter()
-            .for_each(|(n, r)| writeln!(buf, "    {:<20}: {}", n, r.to_string()).unwrap());
-        buf
+            .try_for_each(|(n, r)| writeln!(f, "    {:<20}: {}", n, r))
     }
 }
 
@@ -101,10 +98,12 @@ impl ActivationRecord {
     pub fn set_value(&mut self, name: &str, value: Value) {
         self.members
             .get_mut(name)
-            .expect(&format!(
-                "unkown variable {}, semantic analyzer should've handeled this",
-                name
-            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "unkown variable {}, semantic analyzer should've handeled this",
+                    name
+                )
+            })
             .set(value);
     }
     pub fn contains(&self, name: &str) -> bool {
@@ -125,14 +124,10 @@ pub struct CallStack {
     records: Vec<ActivationRecord>,
 }
 
-impl ToString for CallStack {
-    fn to_string(&self) -> String {
-        let mut buf = String::new();
-        writeln!(buf, "CALL STACK").unwrap();
-        self.records
-            .iter()
-            .for_each(|r| writeln!(buf, "{}", r.to_string()).unwrap());
-        buf
+impl Display for CallStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "CALL STACK")?;
+        self.records.iter().try_for_each(|r| writeln!(f, "{}", r))
     }
 }
 
@@ -290,8 +285,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             } => {
                 declarations
                     .iter()
-                    .map(|d| self.visit_declaration(d, tree, semantic_metadata))
-                    .collect::<Result<(), Error>>()?;
+                    .try_for_each(|d| self.visit_declaration(d, tree, semantic_metadata))?;
                 self.visit_stmt(*statements, tree, semantic_metadata)
             }
             Stmt::Compound(stmts) => {
@@ -314,7 +308,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                                 "value {:?} is outside of range {:?} bounds",
                                 val, range_symbol
                             ),
-                            pos: tree.node_pos(NodeRef::ExprRef(*right)),
+                            pos: tree.node_pos(NodeRef::Expr(*right)),
                             error_code: ErrorCode::RangeOutOfBounds,
                         });
                     }
@@ -492,12 +486,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                         name,
                         type_symbol: _,
                         ..
-                    } => Ok(self
-                        .call_stack
-                        .peek()
-                        .get_value(name)
-                        .map(|v| v.clone())
-                        .unwrap()),
+                    } => Ok(self.call_stack.peek().get_value(name).cloned().unwrap()),
                     VarSymbol::Const { value, .. } => Ok(value.clone().into()),
                 }
             }
@@ -514,7 +503,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
             Expr::BinOp { op, left, right } => {
                 let v_l = self.visit_expr(*left, tree, semantic_metadata)?;
                 let v_r = self.visit_expr(*right, tree, semantic_metadata)?;
-                let pos = tree.node_pos(NodeRef::ExprRef(*right));
+                let pos = tree.node_pos(NodeRef::Expr(*right));
                 bin_op(pos, op, v_l, v_r)
             }
             Expr::Index {
@@ -560,7 +549,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
         semantic_metadata: &SemanticMetadata,
     ) -> Result<(), Error> {
         match decl {
-            Decl::VarDecl {
+            Decl::Var {
                 var,
                 type_node,
                 default_value,
@@ -607,12 +596,9 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 .iter()
                 .filter(|p| !p.out)
                 .map(|p| p.type_node)
-                .map(|t| self.visit_type(t, tree, semantic_metadata))
-                .collect::<Result<(), Error>>(),
-            Decl::ConstDecl { .. } => Ok(()),
-            Decl::TypeDecl { type_node, .. } => {
-                self.visit_type(*type_node, tree, semantic_metadata)
-            }
+                .try_for_each(|t| self.visit_type(t, tree, semantic_metadata)),
+            Decl::Const { .. } => Ok(()),
+            Decl::Type { type_node, .. } => self.visit_type(*type_node, tree, semantic_metadata),
         }
     }
     fn visit_callable(
@@ -656,7 +642,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                                                     "value {:?} is outside of bounds of range {:?}",
                                                     value, range_symbol
                                                 ),
-                                                pos: tree.node_pos(NodeRef::ExprRef(*arg)),
+                                                pos: tree.node_pos(NodeRef::Expr(*arg)),
                                                 error_code: ErrorCode::RangeOutOfBounds,
                                             });
                                         }
@@ -671,7 +657,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                         VarPassMode::Ref => {}
                     }
                 }
-                if let Some(_) = symbol.return_type {
+                if symbol.return_type.is_some() {
                     ar.set("result");
                     ar.set(&symbol.name);
                 }
@@ -714,7 +700,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                                                     "value {:?} is outside of bounds of range {:?}",
                                                     e, range_symbol
                                                 ),
-                                                pos: tree.node_pos(NodeRef::ExprRef(*a)),
+                                                pos: tree.node_pos(NodeRef::Expr(*a)),
                                                 error_code: ErrorCode::RangeOutOfBounds,
                                             });
                                         }
@@ -748,7 +734,7 @@ impl<R: BufRead, W: Write> Interpreter<R, W> {
                 if let Err(Error::BuiltinFunctionError { function_name, msg }) = res {
                     return Err(Error::RuntimeError {
                         msg: format!("{}: {}", function_name, msg),
-                        pos: tree.node_pos(NodeRef::ExprRef(*node)),
+                        pos: tree.node_pos(NodeRef::Expr(*node)),
                         error_code: ErrorCode::BuiltinFunctionError,
                     });
                 }
@@ -847,7 +833,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Integer(v_l), Value::Integer(v_r)) => {
                 if v_r == 0 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -857,7 +843,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Integer(v_l), Value::Real(v_r)) => {
                 if v_r.abs() < 0.0000000001 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -867,7 +853,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Real(v_l), Value::Integer(v_r)) => {
                 if v_r == 0 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -877,7 +863,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Real(v_l), Value::Real(v_r)) => {
                 if v_r.abs() < 0.0000000001 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -890,7 +876,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Integer(v_l), Value::Integer(v_r)) => {
                 if v_r == 0 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -900,7 +886,7 @@ fn bin_op(pos: Pos, op: &TokenType, v_l: Value, v_r: Value) -> Result<Value, Err
             (Value::Real(v_l), Value::Integer(v_r)) => {
                 if v_r == 0 {
                     return Err(Error::RuntimeError {
-                        msg: format!("division by zero"),
+                        msg: "division by zero".into(),
                         pos,
                         error_code: ErrorCode::DivisionByZero,
                     });
@@ -973,14 +959,8 @@ mod tests {
                     let lexer = Lexer::new(&source_code);
                     let tree = Parser::new(lexer).unwrap().parse().unwrap();
                     let semantic_metadata = SemanticAnalyzer::new().analyze(&tree).unwrap();
-                    let mut _inp: Vec<&str> = Vec::new();
-                    $(
-                        _inp.push($first_input);
-                        $(
-                            _inp.push($input);
-                        )*
-                    )?
-                    let inp = _inp.join("\n") + "\n";
+                    let inp: Vec<&str> = vec![$($first_input $(, $input)*)?];
+                    let inp = inp.join("\n") + "\n";
                     let inp = inp.as_bytes();
                     let inp = Cursor::new(inp);
                     let out = BufWriter::new(Vec::new());
@@ -990,14 +970,8 @@ mod tests {
                         .into_inner()
                         .unwrap();
                     let out_text = String::from_utf8(out).unwrap();
-                    let mut _expected_out: Vec<&str> = Vec::new();
-                    $(
-                        _expected_out.push($first_output);
-                        $(
-                            _expected_out.push($output);
-                        )*
-                    )?
-                    let mut expected_out = _expected_out.join("\n");
+                    let expected_out: Vec<&str> = vec![$($first_output $(, $output)*)?];
+                    let mut expected_out = expected_out.join("\n");
                     if !expected_out.is_empty() {
                         expected_out.push_str("\n");
                     }
@@ -1023,14 +997,7 @@ mod tests {
                     let lexer = Lexer::new(&source_code);
                     let tree = Parser::new(lexer).unwrap().parse().unwrap();
                     let semantic_metadata = SemanticAnalyzer::new().analyze(&tree).unwrap();
-                    let mut _inp: Vec<&str> = Vec::new();
-                    $(
-                        _inp.push($first_input);
-                        $(
-                            _inp.push($input);
-                        )*
-                    )?
-                    let inp = _inp.join("\n") + "\n";
+                    let inp = vec![$($first_input $(, $input)*)?].join("\n") + "\n";
                     let inp = inp.as_bytes();
                     let inp = Cursor::new(inp);
                     let out = BufWriter::new(Vec::new());

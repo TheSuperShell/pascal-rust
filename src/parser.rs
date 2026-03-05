@@ -89,16 +89,16 @@ pub struct Condition {
 
 #[derive(Debug, Clone)]
 pub enum Decl {
-    VarDecl {
+    Var {
         default_value: Option<ExprRef>,
         var: ExprRef,
         type_node: TypeRef,
     },
-    TypeDecl {
+    Type {
         var: TypeRef,
         type_node: TypeRef,
     },
-    ConstDecl {
+    Const {
         var: ExprRef,
         literal: ExprRef,
     },
@@ -187,10 +187,7 @@ impl<'a> Parser<'a> {
         let block = self.block()?;
         let end_token = self.eat(TokenType::Dot)?;
         Ok(self.stmt_pool.alloc(
-            Stmt::Program {
-                name: var,
-                block: block,
-            },
+            Stmt::Program { name: var, block },
             start_token.span().total(&end_token.span()),
         ))
     }
@@ -340,7 +337,7 @@ impl<'a> Parser<'a> {
         };
         Ok(vars
             .iter()
-            .map(|n| Decl::VarDecl {
+            .map(|n| Decl::Var {
                 var: *n,
                 type_node: type_spec,
                 default_value,
@@ -429,7 +426,7 @@ impl<'a> Parser<'a> {
         let literal = self.literal()?;
         Ok(names
             .iter()
-            .map(|n| Decl::ConstDecl { var: *n, literal })
+            .map(|n| Decl::Const { var: *n, literal })
             .collect())
     }
 
@@ -446,7 +443,7 @@ impl<'a> Parser<'a> {
         Ok(names
             .iter()
             .map(|&t| self.type_pool.alloc(Type::Alias(t), t.span()))
-            .map(|t| Decl::TypeDecl {
+            .map(|t| Decl::Type {
                 var: t,
                 type_node: type_decl,
             })
@@ -875,25 +872,25 @@ impl<'a> Parser<'a> {
                 self.current_token = self.lexer.next()?;
                 let factor = self.factor()?;
                 let span = token.span().total(&self.expr_pool.span(factor));
-                return Ok(self.expr_pool.alloc(
+                Ok(self.expr_pool.alloc(
                     Expr::UnaryOp {
                         op: *token.token_type(),
                         expr: factor,
                     },
                     span,
-                ));
+                ))
             }
             TokenType::Not => {
                 let span = self.eat(TokenType::Not)?.span();
                 let expr = self.compare_expr()?;
                 let span = span.total(&self.expr_pool.span(expr));
-                return Ok(self.expr_pool.alloc(
+                Ok(self.expr_pool.alloc(
                     Expr::UnaryOp {
                         op: TokenType::Not,
                         expr,
                     },
                     span,
-                ));
+                ))
             }
             TokenType::IntegerConst(_)
             | TokenType::Int64Const(_)
@@ -905,7 +902,7 @@ impl<'a> Parser<'a> {
                 self.eat(TokenType::LParen)?;
                 let expr = self.expr();
                 self.eat(TokenType::RParen)?;
-                return expr;
+                expr
             }
             TokenType::Id => match self.lexer.current_char() {
                 Some('(') => self.call_expr(),
@@ -1014,9 +1011,9 @@ impl<'a> Parser<'a> {
 
 #[derive(Debug, Clone)]
 pub enum NodeRef {
-    ExprRef(ExprRef),
-    StmtRef(StmtRef),
-    TypeRef(TypeRef),
+    Expr(ExprRef),
+    Stmt(StmtRef),
+    Type(TypeRef),
 }
 #[derive(Debug, Clone)]
 pub struct Tree<'a> {
@@ -1030,9 +1027,9 @@ pub struct Tree<'a> {
 impl<'a> Tree<'a> {
     pub fn node_pos(&self, node_ref: NodeRef) -> Pos {
         match node_ref {
-            NodeRef::ExprRef(r) => self.expr_pool.span(r).pos(self.source_code),
-            NodeRef::StmtRef(r) => self.stmt_pool.span(r).pos(self.source_code),
-            NodeRef::TypeRef(r) => self.type_pool.span(r).pos(self.source_code),
+            NodeRef::Expr(r) => self.expr_pool.span(r).pos(self.source_code),
+            NodeRef::Stmt(r) => self.stmt_pool.span(r).pos(self.source_code),
+            NodeRef::Type(r) => self.type_pool.span(r).pos(self.source_code),
         }
     }
 
@@ -1046,21 +1043,21 @@ impl<'a> Tree<'a> {
     fn visit_declaraction(&self, decl: &Decl, level: usize) -> String {
         let indent = " ".repeat(2 * level);
         match decl {
-            Decl::ConstDecl { var, literal } => {
+            Decl::Const { var, literal } => {
                 format!(
                     "{indent}Const\n{}\n{}",
                     self.visit_expr(*var, level + 1),
                     self.visit_expr(*literal, level + 2)
                 )
             }
-            Decl::TypeDecl { var, type_node } => {
+            Decl::Type { var, type_node } => {
                 format!(
                     "{indent}Type\n{}\n{}",
                     self.visit_type(*var, level + 1),
                     self.visit_type(*type_node, level + 2)
                 )
             }
-            Decl::VarDecl {
+            Decl::Var {
                 var,
                 type_node,
                 default_value,
@@ -1071,7 +1068,7 @@ impl<'a> Tree<'a> {
                     self.visit_type(*type_node, level + 2)
                 );
                 if let Some(v) = default_value {
-                    result.push_str("\n");
+                    result.push('\n');
                     result.push_str(&format!(
                         "{indent}  Default\n{}",
                         self.visit_expr(*v, level + 2)
@@ -1105,7 +1102,7 @@ impl<'a> Tree<'a> {
                     .collect::<Vec<String>>()
                     .join("\n");
                 if !params_str.is_empty() {
-                    result.push_str("\n");
+                    result.push('\n');
                     result.push_str(&params_str);
                 }
                 result.push_str(&self.visit_stmt(*block, level));
@@ -1177,7 +1174,7 @@ impl<'a> Tree<'a> {
                     .join("\n");
                 let compound: String = self.visit_stmt(*statements, level);
                 if !compound.is_empty() {
-                    result.push_str("\n");
+                    result.push('\n');
                     result.push_str(&compound);
                 }
                 result
@@ -1240,13 +1237,13 @@ impl<'a> Tree<'a> {
                     .collect::<Vec<String>>()
                     .join("\n");
                 if !elifs_str.is_empty() {
-                    cond_str.push_str("\n");
+                    cond_str.push('\n');
                     cond_str.push_str(elifs_str);
                 }
                 let else_str = else_statement
                     .map(|v| format!("{indent}Else\n{}", self.visit_stmt(v, level + 1)));
                 if let Some(v) = else_str {
-                    cond_str.push_str("\n");
+                    cond_str.push('\n');
                     cond_str.push_str(&v);
                 }
                 cond_str
@@ -1285,7 +1282,7 @@ impl<'a> Tree<'a> {
                     .collect::<Vec<String>>()
                     .join("\n");
                 if !param_str.is_empty() {
-                    result.push_str("\n");
+                    result.push('\n');
                     result.push_str(&param_str);
                 }
                 result

@@ -147,9 +147,9 @@ macro_rules! define_ref {
             }
         }
 
-        impl Into<usize> for $name {
-            fn into(self) -> usize {
-                self.0 as usize
+        impl From<$name> for usize {
+            fn from(value: $name) -> usize {
+                value.0 as usize
             }
         }
 
@@ -233,7 +233,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn to_string(&self) -> String {
+    pub fn repr(&self) -> String {
         match self {
             Self::Boolean(b) => b.to_string(),
             Self::Char(c) => c.to_string(),
@@ -244,7 +244,7 @@ impl Value {
             Self::Array(vals) => format!(
                 "[{}]",
                 vals.iter()
-                    .map(|v| v.as_deref().map_or("None".to_string(), |v| v.to_string()))
+                    .map(|v| v.as_deref().map_or("None".to_string(), |v| v.repr()))
                     .join(", ")
             ),
         }
@@ -273,14 +273,14 @@ impl Display for Value {
 }
 
 impl Expr {
-    pub fn into_value(&self, tree: &Tree) -> Option<Value> {
-        match self {
-            &Expr::LiteralBool(b) => Some(Value::Boolean(b)),
-            &Expr::LiteralChar(c) => Some(Value::Char(c)),
-            &Expr::LiteralInt64(i) => Some(Value::Int64(i)),
-            &Expr::LiteralInteger(i) => Some(Value::Integer(i)),
-            &Expr::LiteralReal(r) => Some(Value::Real(r)),
-            &Expr::Var { name } => Some(Value::String(name.lexem(tree.source_code).into())),
+    pub fn as_value(&self, tree: &Tree) -> Option<Value> {
+        match *self {
+            Expr::LiteralBool(b) => Some(Value::Boolean(b)),
+            Expr::LiteralChar(c) => Some(Value::Char(c)),
+            Expr::LiteralInt64(i) => Some(Value::Int64(i)),
+            Expr::LiteralInteger(i) => Some(Value::Integer(i)),
+            Expr::LiteralReal(r) => Some(Value::Real(r)),
+            Expr::Var { name } => Some(Value::String(name.lexem(tree.source_code).into())),
             _ => None,
         }
     }

@@ -47,23 +47,17 @@ fn main() {
             init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
             let path = sub_m.get_one::<String>("path").unwrap();
             let target = sub_m.get_one::<String>("target").unwrap();
-            match compile_into_file(path, target) {
-                Err(e) => {
-                    error!(target: "pascal", "{e}");
-                    std::process::exit(1);
-                }
-                Ok(_) => {}
+            if let Err(e) = compile_into_file(path, target) {
+                error!(target: "pascal", "{e}");
+                std::process::exit(1);
             };
         }
         Some(("interp", sub_m)) => {
             init_logging(sub_m.get_flag("stack"), sub_m.get_flag("scope"));
             let path = sub_m.get_one::<String>("path").unwrap();
-            match interprete(path) {
-                Err(e) => {
-                    error!(target: "pascal", "{e}");
-                    std::process::exit(1)
-                }
-                Ok(_) => {}
+            if let Err(e) = interprete(path) {
+                error!(target: "pascal", "{e}");
+                std::process::exit(1)
             }
         }
         _ => println!("{}", help_message.unwrap_or_default()),

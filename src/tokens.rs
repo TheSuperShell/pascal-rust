@@ -109,7 +109,7 @@ pub enum TokenType {
     RBracket,
     Id,
     StringConst,
-    EOF,
+    Eof,
 }
 
 impl PartialEq for TokenType {

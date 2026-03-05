@@ -92,7 +92,7 @@ impl<'a> Lexer<'a> {
         }
         match self.current_char {
             None => Ok(Token::new(
-                TokenType::EOF,
+                TokenType::Eof,
                 self.previous_index(),
                 0,
                 self.pos.shift(1),
@@ -102,17 +102,17 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(Token::new(token, self.previous_index(), 1, self.pos))
             }
-            Some(c) if c == '>' => {
+            Some('>') => {
                 self.advance();
                 match self.current_char {
-                    Some(c) if c == '=' => {
+                    Some('=') => {
                         self.advance();
-                        return Ok(Token::new(
+                        Ok(Token::new(
                             TokenType::GreaterEqual,
                             self.previous_index() - 1,
                             2,
                             self.pos.shift(2),
-                        ));
+                        ))
                     }
                     _ => Ok(Token::new(
                         TokenType::GreaterThen,
@@ -122,26 +122,26 @@ impl<'a> Lexer<'a> {
                     )),
                 }
             }
-            Some(c) if c == '<' => {
+            Some('<') => {
                 self.advance();
                 match self.current_char {
-                    Some(c) if c == '=' => {
+                    Some('=') => {
                         self.advance();
-                        return Ok(Token::new(
+                        Ok(Token::new(
                             TokenType::LessEqual,
                             self.previous_index() - 1,
                             2,
                             self.pos.shift(2),
-                        ));
+                        ))
                     }
-                    Some(c) if c == '>' => {
+                    Some('>') => {
                         self.advance();
-                        return Ok(Token::new(
+                        Ok(Token::new(
                             TokenType::NotEqual,
                             self.previous_index() - 1,
                             2,
                             self.pos.shift(2),
-                        ));
+                        ))
                     }
                     _ => Ok(Token::new(
                         TokenType::LessThen,
@@ -151,17 +151,17 @@ impl<'a> Lexer<'a> {
                     )),
                 }
             }
-            Some(c) if c == ':' => {
+            Some(':') => {
                 self.advance();
                 match self.current_char {
-                    Some(c) if c == '=' => {
+                    Some('=') => {
                         self.advance();
-                        return Ok(Token::new(
+                        Ok(Token::new(
                             TokenType::Assign,
                             self.previous_index() - 1,
                             2,
                             self.pos.shift(2),
-                        ));
+                        ))
                     }
                     _ => Ok(Token::new(
                         TokenType::Colon,
@@ -171,8 +171,8 @@ impl<'a> Lexer<'a> {
                     )),
                 }
             }
-            Some(c) if c == '-' => match self.peek() {
-                Some(c) if c.is_digit(10) => Ok(self.number()),
+            Some('-') => match self.peek() {
+                Some(c) if c.is_ascii_digit() => Ok(self.number()),
                 _ => {
                     self.advance();
                     Ok(Token::new(
@@ -184,7 +184,7 @@ impl<'a> Lexer<'a> {
                 }
             },
             Some(c) if c.is_numeric() => Ok(self.number()),
-            Some(c) if c == '\'' => Ok(self.string()),
+            Some('\'') => Ok(self.string()),
             Some(c) if c.is_alphanumeric() || c == '_' => Ok(self.id()),
             _ => Err(Error::LexerError {
                 msg: format!("unexpected character {:?}", self.current_char),
@@ -221,13 +221,13 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
         while let Some(c) = self.current_char
-            && c.is_digit(10)
+            && c.is_ascii_digit()
         {
             self.advance();
         }
         if (self.current_char.is_some() && self.current_char.unwrap() != '.')
             || self.peek().is_none()
-            || (self.peek().is_some() && !self.peek().unwrap().is_digit(10))
+            || (self.peek().is_some() && !self.peek().unwrap().is_ascii_digit())
         {
             let len = (self.index - current_index) as u32;
             let int_value: i64 = self.source_code[current_index..self.index]
@@ -242,7 +242,7 @@ impl<'a> Lexer<'a> {
         }
         self.advance();
         while let Some(c) = self.current_char
-            && c.is_digit(10)
+            && c.is_ascii_digit()
         {
             self.advance();
         }
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_lexer() {
-        const SOURCE_CODE: &'static str = "PROGRAM IN FOR 1.3212; -10 - { some comment }{another one}  'c' \\\\ other type of comments FOR i := 10\n 'hello'\n;;. >= : :=";
+        const SOURCE_CODE: &str = "PROGRAM IN FOR 1.3212; -10 - { some comment }{another one}  'c' \\\\ other type of comments FOR i := 10\n 'hello'\n;;. >= : :=";
         let expected = [
             TokenType::Program,
             TokenType::In,
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_string_token() {
-        const SOURCE_CODE: &'static str = "a := 'Hello, World!'";
+        const SOURCE_CODE: &str = "a := 'Hello, World!'";
         let mut result = Lexer::new(SOURCE_CODE);
         result.next().unwrap();
         result.next().unwrap();
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_unexpected_token() {
-        const SOURCE_CODE: &'static str = "@";
+        const SOURCE_CODE: &str = "@";
         let result = Lexer::new(SOURCE_CODE).next();
         assert!(result.is_err());
         let err = result.unwrap_err();

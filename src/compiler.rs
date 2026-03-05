@@ -11,8 +11,8 @@ use crate::{
 use std::io::Write;
 use std::{collections::HashMap, fmt::Display, sync::LazyLock};
 
-const STD_DIV0_ERROR: &'static str = "std.error.div0_error";
-const STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR: &'static str = "std.error.index_out_of_bounds_error";
+const STD_DIV0_ERROR: &str = "std.error.div0_error";
+const STD_ARR_INDEX_OUT_OF_BOUNDS_ERROR: &str = "std.error.index_out_of_bounds_error";
 
 static BUILTIN_CALLABLES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut map = HashMap::new();
@@ -111,10 +111,10 @@ impl<'a> Register<'a> {
             _ => unimplemented!("more input variables are not implemented yet"),
         }
     }
-    pub fn to_size(&self, size: &Size) -> Self {
+    pub fn to_size(self, size: &Size) -> Self {
         match (self, size) {
-            (Self::Literal(i), _) => Self::Literal(*i),
-            (Self::Variable(v), _) => Self::Variable(*v),
+            (Self::Literal(i), _) => Self::Literal(i),
+            (Self::Variable(v), _) => Self::Variable(v),
             (Register::Rax, Size::S64bit) => Self::Rax,
             (Register::Rax, Size::S8bit) => Self::Al,
             (Register::Rax, Size::S32bit) => Self::Eax,
@@ -273,35 +273,35 @@ impl<'a> Register<'a> {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 enum Memory<'a> {
-    StackMemory(StackMemory<'a>),
-    GlobalMemory(GlobalMemory<'a>),
-    IndexMemory(IndexMemory<'a>),
+    Stack(StackMemory<'a>),
+    Global(GlobalMemory<'a>),
+    Index(IndexMemory<'a>),
 }
 impl Display for Memory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Memory::StackMemory(mem) => mem.fmt(f),
-            Memory::GlobalMemory(var) => var.fmt(f),
-            Memory::IndexMemory(ind) => ind.fmt(f),
+            Memory::Stack(mem) => mem.fmt(f),
+            Memory::Global(var) => var.fmt(f),
+            Memory::Index(ind) => ind.fmt(f),
         }
     }
 }
 
-impl<'a> Into<Memory<'a>> for StackMemory<'a> {
-    fn into(self) -> Memory<'a> {
-        Memory::StackMemory(self)
+impl<'a> From<StackMemory<'a>> for Memory<'a> {
+    fn from(value: StackMemory<'a>) -> Self {
+        Memory::Stack(value)
     }
 }
 
-impl<'a> Into<Memory<'a>> for GlobalMemory<'a> {
-    fn into(self) -> Memory<'a> {
-        Memory::GlobalMemory(self)
+impl<'a> From<GlobalMemory<'a>> for Memory<'a> {
+    fn from(value: GlobalMemory<'a>) -> Memory<'a> {
+        Memory::Global(value)
     }
 }
 
-impl<'a> Into<Memory<'a>> for IndexMemory<'a> {
-    fn into(self) -> Memory<'a> {
-        Memory::IndexMemory(self)
+impl<'a> From<IndexMemory<'a>> for Memory<'a> {
+    fn from(value: IndexMemory<'a>) -> Self {
+        Memory::Index(value)
     }
 }
 
@@ -320,33 +320,33 @@ impl Display for Operand<'_> {
     }
 }
 
-impl<'a> Into<Operand<'a>> for Memory<'a> {
-    fn into(self) -> Operand<'a> {
-        Operand::Memory(self)
+impl<'a> From<Memory<'a>> for Operand<'a> {
+    fn from(val: Memory<'a>) -> Self {
+        Operand::Memory(val)
     }
 }
 
-impl<'a> Into<Operand<'a>> for Register<'a> {
-    fn into(self) -> Operand<'a> {
-        Operand::Register(self)
+impl<'a> From<Register<'a>> for Operand<'a> {
+    fn from(val: Register<'a>) -> Self {
+        Operand::Register(val)
     }
 }
 
-impl<'a> Into<Operand<'a>> for StackMemory<'a> {
-    fn into(self) -> Operand<'a> {
-        Operand::Memory(Memory::StackMemory(self))
+impl<'a> From<StackMemory<'a>> for Operand<'a> {
+    fn from(val: StackMemory<'a>) -> Self {
+        Operand::Memory(Memory::Stack(val))
     }
 }
 
-impl<'a> Into<Operand<'a>> for GlobalMemory<'a> {
-    fn into(self) -> Operand<'a> {
-        Operand::Memory(Memory::GlobalMemory(self))
+impl<'a> From<GlobalMemory<'a>> for Operand<'a> {
+    fn from(val: GlobalMemory<'a>) -> Self {
+        Operand::Memory(Memory::Global(val))
     }
 }
 
-impl<'a> Into<Operand<'a>> for IndexMemory<'a> {
-    fn into(self) -> Operand<'a> {
-        Operand::Memory(Memory::IndexMemory(self))
+impl<'a> From<IndexMemory<'a>> for Operand<'a> {
+    fn from(val: IndexMemory<'a>) -> Self {
+        Operand::Memory(Memory::Index(val))
     }
 }
 
@@ -371,9 +371,9 @@ impl<'a> Display for Label<'a> {
     }
 }
 
-impl<'a> Into<Label<'a>> for &'a str {
-    fn into(self) -> Label<'a> {
-        Label::Name(self)
+impl<'a> From<&'a str> for Label<'a> {
+    fn from(val: &'a str) -> Self {
+        Label::Name(val)
     }
 }
 
@@ -558,7 +558,7 @@ impl<'a, W: Write> Assambler<'a, W> {
         if self.peephole {
             self.optimize();
         }
-        std::mem::replace(&mut self.commands, Vec::new())
+        std::mem::take(&mut self.commands)
             .into_iter()
             .try_for_each(|cmd| {
                 write!(self.output, "\t")?;
@@ -659,7 +659,7 @@ impl<'a> ActivationRecord<'a> {
 
     #[inline]
     pub fn aligned_size(&self) -> usize {
-        ((self.size() + 15) / 16) * 16
+        self.size().div_ceil(16) * 16
     }
 
     #[inline]
@@ -676,7 +676,7 @@ impl<'a> ActivationRecord<'a> {
     }
 }
 
-const AR_VAR_STR: &'static str = "== Activation Record Contents ==";
+const AR_VAR_STR: &str = "== Activation Record Contents ==";
 static AR_VAR_SEP: LazyLock<String> = LazyLock::new(|| "-".repeat(55));
 
 impl<'a> Display for ActivationRecord<'a> {
@@ -691,7 +691,7 @@ impl<'a> Display for ActivationRecord<'a> {
         writeln!(f, "{sep}")?;
         writeln!(f, ">   total size: {:>4} bytes", self.size())?;
         writeln!(f, "> aligned size: {:>4} bytes", self.aligned_size())?;
-        if self.local_variables.len() > 0 {
+        if !self.local_variables.is_empty() {
             writeln!(f, "{AR_VAR_STR}")?;
             self.local_variables
                 .iter()
@@ -755,7 +755,7 @@ impl<'a> CallStack<'a> {
             .last_mut()
             .unwrap()
             .local_variables
-            .push((name.into(), size));
+            .push((name, size));
     }
 
     #[inline]
@@ -764,7 +764,7 @@ impl<'a> CallStack<'a> {
             .last_mut()
             .unwrap()
             .local_variables
-            .push((name.into(), &Size::S64bit));
+            .push((name, &Size::S64bit));
     }
 
     #[inline]
@@ -773,11 +773,7 @@ impl<'a> CallStack<'a> {
             .last()
             .unwrap()
             .get_variable_offset(name)
-            .map(|(offset, size)| {
-                Register::Rbp
-                    .with_offset(size, offset + size.to_bytes())
-                    .into()
-            })
+            .map(|(offset, size)| Register::Rbp.with_offset(size, offset + size.to_bytes()))
             .unwrap()
     }
 
@@ -787,7 +783,7 @@ impl<'a> CallStack<'a> {
             .last()
             .unwrap()
             .get_variable_offset(name)
-            .map(|(offset, size)| Register::Rbp.with_offset(size, offset + 8).into())
+            .map(|(offset, size)| Register::Rbp.with_offset(size, offset + 8))
             .unwrap()
     }
 
@@ -913,6 +909,7 @@ impl<'a, W: Write> Compiler<'a, W> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn enter_scope(
         &mut self,
         scope_name: &'a str,
@@ -930,9 +927,9 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.comment("block")?;
         let defaults = declarations
             .iter()
-            .filter(|d| matches!(d, Decl::VarDecl { .. }))
+            .filter(|d| matches!(d, Decl::Var { .. }))
             .map(|decl| match decl {
-                Decl::VarDecl {
+                Decl::Var {
                     default_value,
                     var,
                     type_node: _,
@@ -976,7 +973,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                         let mem = self.call_stack.lookup_var_mem(param_name);
                         self.asm.push_cmd(Command::Mov {
                             dst: mem.into(),
-                            src: reg.to_size(&size).into(),
+                            src: reg.to_size(size).into(),
                         });
                     }
                     VarPassMode::Ref => {
@@ -994,7 +991,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             self.asm.push_cmd(Command::Pop(Register::Rax.into()));
             self.asm.push_cmd(Command::Mov {
                 dst: self.call_stack.lookup_var_mem(var_name).into(),
-                src: Register::Rax.to_size(&size).into(),
+                src: Register::Rax.to_size(size).into(),
             });
             Ok::<(), Error>(())
         })?;
@@ -1031,9 +1028,9 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.directive("section .data")?;
         let global_vars = declarations
             .iter()
-            .filter(|d| matches!(d, Decl::VarDecl { .. }))
+            .filter(|d| matches!(d, Decl::Var { .. }))
             .map(|d| match d {
-                Decl::VarDecl {
+                Decl::Var {
                     default_value,
                     var,
                     type_node: _,
@@ -1052,7 +1049,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             .filter(|(.., default)| default.is_some())
             .map(|(name, size, value)| (name, size, value.unwrap()))
             .try_for_each(|(name, size, value)| {
-                let value = tree.expr_pool.get(value).into_value(tree).unwrap();
+                let value = tree.expr_pool.get(value).as_value(tree).unwrap();
                 self.asm.directive(&format!(
                     "{name} {} {value}",
                     size.d()
@@ -1132,7 +1129,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             } => self.enter_global_scope(declarations, statements, tree, semantic_metadata),
             Stmt::Compound(stmts) => stmts
                 .iter()
-                .try_for_each(|v| self.visit_stmt(v, tree, semantic_metadata).into()),
+                .try_for_each(|v| self.visit_stmt(v, tree, semantic_metadata)),
             Stmt::NoOp => Ok(()),
             Stmt::Call { call } => self.visit_call(call, tree, semantic_metadata),
             Stmt::Assign { left, right } => self.visit_assign(left, right, tree, semantic_metadata),
@@ -1154,8 +1151,14 @@ impl<'a, W: Write> Compiler<'a, W> {
                 end,
                 body,
             } => self.visit_for(var, init, end, body, tree, semantic_metadata),
-            Stmt::Break => Ok(self.visit_break()),
-            Stmt::Continue => Ok(self.visit_continue()),
+            Stmt::Break => {
+                self.visit_break();
+                Ok(())
+            }
+            Stmt::Continue => {
+                self.visit_continue();
+                Ok(())
+            }
             Stmt::Exit(val) => self.visit_exit(val.as_ref(), tree, semantic_metadata),
         }
     }
@@ -1253,13 +1256,13 @@ impl<'a, W: Write> Compiler<'a, W> {
                 };
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(&left_size).into(),
-                        src: Register::Rax.to_size(&right_size).into(),
+                        dst: Register::Rax.to_size(left_size),
+                        src: Register::Rax.to_size(right_size).into(),
                     });
                 }
                 self.asm.push_cmd(Command::Mov {
                     dst: source_op,
-                    src: Register::Rax.to_size(&left_size).into(),
+                    src: Register::Rax.to_size(left_size).into(),
                 });
             }
             VarPassMode::Ref => todo!(),
@@ -1293,7 +1296,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 };
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(left_size).into(),
+                        dst: Register::Rax.to_size(left_size),
                         src: Register::Rax.to_size(right_size).into(),
                     });
                 }
@@ -1310,7 +1313,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 });
                 if left_size > right_size {
                     self.asm.push_cmd(Command::Movsx {
-                        dst: Register::Rax.to_size(left_size).into(),
+                        dst: Register::Rax.to_size(left_size),
                         src: Register::Rax.to_size(right_size).into(),
                     });
                 }
@@ -1365,7 +1368,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             self.asm.label(else_l)?;
             self.visit_stmt(else_stmt, tree, semantic_metadata)?;
             self.asm.label(end_l)?;
-        } else if elifs.len() > 0 {
+        } else if !elifs.is_empty() {
             self.asm.label(end_l)?;
         } else {
             self.asm.label(else_l)?;
@@ -1431,12 +1434,12 @@ impl<'a, W: Write> Compiler<'a, W> {
         self.asm.label(l1)?;
         self.asm.push_cmd(Command::Mov {
             dst: Register::Rax.to_size(var_size).into(),
-            src: var_mem.into(),
+            src: var_mem,
         });
         self.asm
-            .push_cmd(Command::Inc(Register::Rax.to_size(var_size).into()));
+            .push_cmd(Command::Inc(Register::Rax.to_size(var_size)));
         self.asm.push_cmd(Command::Mov {
-            dst: var_mem.into(),
+            dst: var_mem,
             src: Register::Rax.to_size(var_size).into(),
         });
         self.asm.push_cmd(Command::Cmp {
@@ -1535,7 +1538,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                 let arr_element_size = arr_size.get_element_size().unwrap();
                 let right_size = semantic_metadata.get_expr_size(index_value).unwrap();
                 self.visit_expr(index_value, tree, semantic_metadata)?;
-                self.setup_array_index(arr_type, &right_size, Register::Rax)?;
+                self.setup_array_index(arr_type, right_size, Register::Rax)?;
                 self.asm.push_cmd(Command::Lea {
                     dst: Register::Rbx,
                     src: GlobalMemory::new_ptr(arr_name).into(),
@@ -1605,7 +1608,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                                 self.asm.push_cmd(Command::Pop(reg.into()));
                                 if &left_size > right_size {
                                     self.asm.push_cmd(Command::Movsx {
-                                        dst: reg.into(),
+                                        dst: reg,
                                         src: reg.to_size(right_size).into(),
                                     });
                                 }
@@ -1616,7 +1619,7 @@ impl<'a, W: Write> Compiler<'a, W> {
                                 match var_pass_mode {
                                     VarPassMode::Val => {
                                         self.asm.push_cmd(Command::Lea {
-                                            dst: reg.into(),
+                                            dst: reg,
                                             src: self.get_variable_memory_address(
                                                 arg,
                                                 tree,
@@ -1780,18 +1783,18 @@ impl<'a, W: Write> Compiler<'a, W> {
             .get_expr_size(right)
             .expect("size is epxected");
         let expr_size = right_size.max(left_size);
-        self.visit_expr(&left, tree, semantic_metadata)?;
-        self.visit_expr(&right, tree, semantic_metadata)?;
+        self.visit_expr(left, tree, semantic_metadata)?;
+        self.visit_expr(right, tree, semantic_metadata)?;
         self.asm.push_cmd(Command::Pop(Register::Rbx.into()));
         self.asm.push_cmd(Command::Pop(Register::Rax.into()));
         if left_size > right_size {
             self.asm.push_cmd(Command::Movsx {
-                dst: Register::Rbx.to_size(expr_size).into(),
+                dst: Register::Rbx.to_size(expr_size),
                 src: Register::Rbx.to_size(right_size).into(),
             });
         } else {
             self.asm.push_cmd(Command::Movsx {
-                dst: Register::Rax.to_size(expr_size).into(),
+                dst: Register::Rax.to_size(expr_size),
                 src: Register::Rax.to_size(left_size).into(),
             });
         }
@@ -1841,7 +1844,7 @@ impl<'a, W: Write> Compiler<'a, W> {
             | TokenType::GreaterEqual
             | TokenType::GreaterThen
             | TokenType::LessThen
-            | TokenType::LessEqual => self.visit_comparison(&op, expr_size)?,
+            | TokenType::LessEqual => self.visit_comparison(op, expr_size)?,
             _ => unreachable!(),
         }
         Ok(())
@@ -1887,14 +1890,14 @@ mod tests {
 
     static INIT: Once = Once::new();
 
-    static ARTIFACT: &'static str = "test_artifacts";
-    static GITIGNORE: &'static str = "test_artifacts/.gitignore";
-    static TEST_CASES: &'static str = "test_cases/compiler";
+    static ARTIFACT: &str = "test_artifacts";
+    static GITIGNORE: &str = "test_artifacts/.gitignore";
+    static TEST_CASES: &str = "test_cases/compiler";
 
-    static STD_ERROR_SRC: &'static str = "lib/std.error.asm";
-    static STD_ERROR_OBJ: &'static str = "test_artifacts/std.error.obj";
-    static STD_IO_SRC: &'static str = "lib/std.io.asm";
-    static STD_IO_OBJ: &'static str = "test_artifacts/std.io.obj";
+    static STD_ERROR_SRC: &str = "lib/std.error.asm";
+    static STD_ERROR_OBJ: &str = "test_artifacts/std.error.obj";
+    static STD_IO_SRC: &str = "lib/std.io.asm";
+    static STD_IO_OBJ: &str = "test_artifacts/std.io.obj";
 
     fn init() {
         INIT.call_once(|| {
@@ -2004,7 +2007,7 @@ mod tests {
                 // .arg(format!("{}/{}.exe", ARTIFACT, self.0))
                 .arg(format!("{}/{}.obj", ARTIFACT, self.0))
                 // .arg(format!("{}/{}.asm", ARTIFACT, self.0))
-                .spawn()
+                .status()
                 .expect("failed to remove the file");
         }
     }
@@ -2022,14 +2025,8 @@ mod tests {
                     let executable = TestExecutable::create(stringify!($name));
                     let output = executable.run();
                     assert!(output.status.success());
-                    let mut _expected_output = Vec::<&str>::new();
-                    $(
-                        _expected_output.push($first_output);
-                        $(
-                            _expected_output.push($output);
-                        )*
-                    )?
-                    let expected_output = _expected_output.join("\n");
+                    let expected_output: Vec<&str> = vec![$($first_output$(, $output)*)?];
+                    let expected_output = expected_output.join("\n");
                     let output = String::from_utf8(output.stdout).unwrap().trim().replace("\r", "");
                     assert_eq!(output, expected_output);
                 }
@@ -2050,14 +2047,8 @@ mod tests {
                     let executable = TestExecutable::create(stringify!($name));
                     let output = executable.run();
                     assert_eq!(output.status.code().unwrap(), 1);
-                    let mut _expected_output = Vec::<&str>::new();
-                    $(
-                        _expected_output.push($first_err);
-                        $(
-                            _expected_output.push($err);
-                        )*
-                    )?
-                    let expected_output = _expected_output.join("\n");
+                    let expected_output: Vec<&str> = vec![$($first_err $(, $err)*)?];
+                    let expected_output = expected_output.join("\n");
                     let output = String::from_utf8(output.stderr).unwrap().trim().replace("\r", "");
                     assert_eq!(output, expected_output);
                 }

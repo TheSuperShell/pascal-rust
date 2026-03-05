@@ -14,18 +14,16 @@ fn write(
     semantic_metadata: &SemanticMetadata,
     args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
-    args.iter()
-        .map(|(v, t)| match v {
-            LValue::Value(v) => {
-                write!(ctx.output(), "{}", t.represent(Some(v), semantic_metadata))?;
-                Ok(())
-            }
-            _ => Err(Error::BuiltinFunctionError {
-                function_name: "writeln",
-                msg: format!("expected literal value, got {:?}", v),
-            }),
-        })
-        .collect::<Result<(), Error>>()?;
+    args.iter().try_for_each(|(v, t)| match v {
+        LValue::Value(v) => {
+            write!(ctx.output(), "{}", t.represent(Some(v), semantic_metadata))?;
+            Ok(())
+        }
+        _ => Err(Error::BuiltinFunctionError {
+            function_name: "writeln",
+            msg: format!("expected literal value, got {:?}", v),
+        }),
+    })?;
     Ok(None)
 }
 fn writeln(
@@ -34,7 +32,7 @@ fn writeln(
     args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
     write(ctx, semantic_metadata, args)?;
-    write!(ctx.output(), "\n")?;
+    writeln!(ctx.output())?;
     Ok(None)
 }
 
@@ -43,25 +41,23 @@ fn readln(
     _: &SemanticMetadata,
     args: BuiltinInput,
 ) -> Result<Option<Value>, Error> {
-    args.iter()
-        .map(|(v, _)| {
-            let mut s = String::new();
-            ctx.input()
-                .read_line(&mut s)
-                .map_err(|e| Error::BuiltinFunctionError {
-                    function_name: "readln",
-                    msg: format!("read line error: {e}"),
-                })?;
-            if s.ends_with('\n') {
-                s.pop();
-            }
-            if s.ends_with('\r') {
-                s.pop();
-            }
-            ctx.write(v, Value::String(s));
-            Ok(())
-        })
-        .collect::<Result<(), Error>>()?;
+    args.iter().try_for_each(|(v, _)| {
+        let mut s = String::new();
+        ctx.input()
+            .read_line(&mut s)
+            .map_err(|e| Error::BuiltinFunctionError {
+                function_name: "readln",
+                msg: format!("read line error: {e}"),
+            })?;
+        if s.ends_with('\n') {
+            s.pop();
+        }
+        if s.ends_with('\r') {
+            s.pop();
+        }
+        ctx.write(v, Value::String(s));
+        Ok::<_, Error>(())
+    })?;
     Ok(None)
 }
 

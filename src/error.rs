@@ -68,6 +68,7 @@ pub enum ErrorCode {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum Error {
     LexerError {
         msg: String,
@@ -95,7 +96,7 @@ pub enum Error {
         function_name: &'static str,
         msg: String,
     },
-    Errors(Vec<Box<Error>>),
+    Errors(Vec<Error>),
 }
 
 pub struct Errors(Vec<Error>);
@@ -110,7 +111,7 @@ impl From<Vec<Error>> for Errors {
 impl From<Error> for Errors {
     fn from(value: Error) -> Self {
         match value {
-            Error::Errors(errs) => Self(errs.into_iter().map(|v| *v).collect()),
+            Error::Errors(errs) => Self(errs.into_iter().collect()),
             _ => Self(vec![value]),
         }
     }
@@ -129,12 +130,7 @@ impl Errors {
 
     pub fn add(self, other: Result<()>) -> Errors {
         match other {
-            Err(Error::Errors(errs)) => Errors(
-                self.0
-                    .into_iter()
-                    .chain(errs.into_iter().map(|v| *v))
-                    .collect(),
-            ),
+            Err(Error::Errors(errs)) => Errors(self.0.into_iter().chain(errs).collect()),
             Err(e) => Errors(self.0.into_iter().chain(once(e)).collect()),
             Ok(()) => self,
         }
@@ -144,17 +140,17 @@ impl Errors {
         match self.0.len() {
             0 => Ok(res),
             1 => Err(self.0.into_iter().last().unwrap()),
-            _ => Err(Error::Errors(self.0.into_iter().map(Box::new).collect())),
+            _ => Err(Error::Errors(self.0.into_iter().collect())),
         }
     }
 }
 
-impl Into<Result<()>> for Errors {
-    fn into(self) -> Result<()> {
-        match self.0.len() {
+impl From<Errors> for Result<()> {
+    fn from(value: Errors) -> Self {
+        match value.0.len() {
             0 => Ok(()),
-            1 => Err(self.0.into_iter().last().unwrap()),
-            _ => Err(Error::Errors(self.0.into_iter().map(Box::new).collect())),
+            1 => Err(value.0.into_iter().last().unwrap()),
+            _ => Err(Error::Errors(value.0.into_iter().collect())),
         }
     }
 }
@@ -252,3 +248,5 @@ impl From<std::fmt::Error> for Error {
         Self::FmtError(value)
     }
 }
+
+impl std::error::Error for Error {}
